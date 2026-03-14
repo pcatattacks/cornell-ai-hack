@@ -38,9 +38,10 @@ async def run_attacks(
     anthropic_client: anthropic.AsyncAnthropic,
     max_per_category: int | None = None,
     delay_seconds: float = 2.0,
+    debug_cb=None,
 ) -> AsyncGenerator[dict, None]:
     config = PLATFORM_CONFIGS[platform]
-    interactor = ChatInteractor(platform=platform, config=config)
+    interactor = ChatInteractor(platform=platform, config=config, debug_cb=debug_cb)
     payloads = load_payloads(max_per_category=max_per_category)
 
     for i, payload_data in enumerate(payloads):

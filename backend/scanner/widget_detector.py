@@ -17,10 +17,22 @@ PLATFORM_CONFIGS = {
         "global_var": "tidioChatApi",
         "dom_selector": "#tidio-chat, iframe#tidio-chat-code",
         "open_command": "tidioChatApi.open()",
-        "input_selector": 'textarea, input[data-testid="visitor-input"]',
-        "response_selector": '[data-testid="message-text"]',
-        "iframe_selector": "iframe#tidio-chat-code",
-        "uses_iframe": True,
+        "input_selector": '[data-testid="newMessageTextarea"]',
+        "response_selector": '[data-testid="messagesLog"] > *',
+        "iframe_selector": None,
+        "uses_iframe": False,
+        "shadow_host": "#tidio-chat",
+        "start_chat_command": """
+            (() => {
+                const root = document.querySelector('#tidio-chat')?.shadowRoot;
+                if (!root) return false;
+                const operator = root.querySelector('[data-testid="operator"]');
+                if (operator) { operator.click(); return true; }
+                const homeButtons = root.querySelectorAll('[data-testid="home"] button, [data-testid="home"] [role="button"], [data-testid="home"] [class*="button"]');
+                if (homeButtons.length) { homeButtons[0].click(); return true; }
+                return false;
+            })()
+        """,
     },
     "zendesk": {
         "global_var": "zE",
