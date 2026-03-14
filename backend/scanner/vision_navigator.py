@@ -49,16 +49,30 @@ async def navigate_to_chat(
             result = await _ask_claude(
                 anthropic_client,
                 screenshot_b64,
-                """Look at this webpage screenshot carefully.
+                """Look at this webpage screenshot carefully. I am looking for an AI chatbot or conversational assistant — a surface where a user can type natural language messages and get responses from an AI or live agent.
 
-1. Is there a chat widget, chatbot button, live chat icon, or support chat visible anywhere on the page?
-   Common locations: bottom-right corner floating button, bottom-left, or an embedded chat panel.
-2. If yes, is it OPEN (showing a conversation area or message input) or CLOSED (just a small button/icon)?
-3. If it's closed, what are the exact pixel coordinates (x, y) of the center of the button I should click to open it?
-4. If it's open, is there a message input field visible where I can type?
+What I AM looking for:
+- AI chatbot widgets (e.g., "Chat with us", "Ask AI", customer support bots)
+- Floating chat bubbles/icons in corners (usually bottom-right) that open a conversational interface
+- Embedded chat panels with a message input and conversation history
+- AI assistants branded as Intercom Fin, Tidio Lyro, Zendesk AI, Drift, Crisp, HubSpot, LiveChat, or similar
+
+What I am NOT looking for:
+- Search bars or site search
+- Contact forms (name/email/message forms that submit once, not conversational)
+- Newsletter signup forms
+- Feedback widgets ("Rate your experience")
+- Social media links or share buttons
+- Login forms
+
+Is there a CONVERSATIONAL AI CHATBOT on this page?
+
+1. If yes, is it OPEN (showing a conversation view with a message input where I can type and send messages back and forth) or CLOSED (just a launcher button/icon I need to click first)?
+2. If closed, what are the exact pixel coordinates (x, y) of the center of the launcher button?
+3. If open, is there a text input field where I can type a message?
 
 Respond with ONLY this JSON:
-{"found": true/false, "state": "open"|"closed"|"not_found", "click": {"x": <number>, "y": <number>} or null, "has_input": true/false, "description": "<what you see>"}""",
+{"found": true/false, "state": "open"|"closed"|"not_found", "click": {"x": <number>, "y": <number>} or null, "has_input": true/false, "widget_location": {"region": "bottom-right"|"bottom-left"|"right-panel"|"center"|"other", "bounding_box": {"x": <top-left-x>, "y": <top-left-y>, "width": <px>, "height": <px>}}, "description": "<what you see>"}""",
             )
             await _log(f"vision step 1 result: {json.dumps(result)}")
 
@@ -82,21 +96,26 @@ Respond with ONLY this JSON:
             result = await _ask_claude(
                 anthropic_client,
                 screenshot_b64,
-                """Look at this webpage screenshot. I'm trying to interact with a chat widget.
+                """Look at this webpage screenshot. I clicked on what I thought was an AI chatbot launcher. I need to get to a state where I can type natural language messages to the chatbot and receive responses.
 
-What do you see in the chat area? Choose one:
-A) A message input field where I can type (textarea, input box) — the chat is ready
-B) A pre-chat form asking for email, name, or other info before I can chat
-C) A menu/home screen with options to click (like "Chat with us", "Talk to agent", etc.)
-D) The chat widget is still closed or I need to click something to proceed
-E) No chat widget visible
+What do you see now? Choose the BEST match:
 
-If B: describe what form fields are visible.
-If C: what are the pixel coordinates of the button I should click to start a conversation?
-If D: what are the pixel coordinates I should click?
+A) A CONVERSATION VIEW with a text input field where I can type a message and send it to the chatbot. This looks like a chat interface with message bubbles or a conversation log, and a textarea/input at the bottom to type. THE CHAT IS READY TO USE.
+
+B) A PRE-CHAT FORM asking for my email address, name, phone number, or other personal info BEFORE I can start chatting. There may be a consent checkbox and a "Send" or "Submit" button.
+
+C) A MENU or HOME SCREEN inside the chat widget. This shows options like "Chat with Lyro", "Talk to an agent", "Help Center", "FAQs", etc. I need to click one of these options to navigate into the actual conversation. Tell me the pixel coordinates of the option that will start a CONVERSATION with the AI chatbot (not FAQs or help center).
+
+D) The chat widget is still CLOSED or minimized. I see a button or icon I need to click to open it. Give me the coordinates.
+
+E) NO CHATBOT visible anywhere on the page.
+
+If B: list the form fields visible (email, name, checkbox, etc.)
+If C: give the pixel coordinates of the button to click to START A CONVERSATION (prefer "Chat with..." or "Talk to..." options over "Help Center" or "FAQs")
+If D: give the pixel coordinates of the launcher button
 
 Respond with ONLY this JSON:
-{"status": "A"|"B"|"C"|"D"|"E", "click": {"x": <number>, "y": <number>} or null, "form_fields": ["email", "name", "checkbox", etc.] or null, "description": "<what you see>"}""",
+{"status": "A"|"B"|"C"|"D"|"E", "click": {"x": <number>, "y": <number>} or null, "form_fields": ["email", "name", "checkbox", etc.] or null, "widget_bounds": {"x": <top-left-x>, "y": <top-left-y>, "width": <px>, "height": <px>}, "description": "<what you see>"}""",
             )
             await _log(f"vision step {step + 1} result: {json.dumps(result)}")
 
