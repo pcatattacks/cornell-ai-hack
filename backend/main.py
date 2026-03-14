@@ -23,6 +23,8 @@ from scanner.prechat_handler import (
     open_widget,
 )
 from scanner.attack_runner import run_attacks
+from scanner.generic_widget_finder import find_widget
+from scanner.generic_chat_interactor import GenericChatInteractor
 from scanner.scoring import (
     calculate_category_score,
     calculate_overall_score,
@@ -142,62 +144,96 @@ async def scan_endpoint(websocket: WebSocket):
                 results = {"globals": {}, "dom": {}}
 
             platform = parse_detection_results(results)
+            generic_widget = None
+            use_generic = False
 
-            if not platform:
+            if platform:
                 await websocket.send_json(
-                    {
-                        "type": "widget_not_found",
-                        "message": "No supported chat widget detected on this page.",
-                    }
-                )
-                await websocket.send_json(
-                    {
-                        "type": "scan_complete",
-                        "report": {
-                            "url": url,
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                            "platform": None,
-                            "overall_grade": "Scan Incomplete",
-                            "overall_score": None,
-                            "categories": {},
-                            "findings": [],
-                            "message": "No supported chat widget detected.",
-                        },
-                    }
-                )
-                await browser.close()
-                return
-
-            await websocket.send_json(
-                {
-                    "type": "widget_detected",
-                    "platform": platform,
-                }
-            )
-
-            widget_opened = await open_widget(page, platform)
-            if widget_opened:
-                await websocket.send_json(
-                    {"type": "prechat_status", "action": "widget_opened"}
+                    {"type": "widget_detected", "platform": platform}
                 )
 
-            config = PLATFORM_CONFIGS[platform]
-            if config["uses_iframe"] and config.get("iframe_selector"):
-                frame_el = await page.query_selector(config["iframe_selector"])
-                if frame_el:
-                    frame = await frame_el.content_frame()
-                    if frame:
-                        form_filled = await fill_prechat_form(frame, platform)
-                        if form_filled:
-                            await websocket.send_json(
-                                {"type": "prechat_status", "action": "form_filled"}
-                            )
-            else:
-                form_filled = await fill_prechat_form(page, platform)
-                if form_filled:
+                widget_opened = await open_widget(page, platform)
+                if widget_opened:
                     await websocket.send_json(
-                        {"type": "prechat_status", "action": "form_filled"}
+                        {"type": "prechat_status", "action": "widget_opened"}
                     )
+
+                config = PLATFORM_CONFIGS[platform]
+                if config["uses_iframe"] and config.get("iframe_selector"):
+                    frame_el = await page.query_selector(config["iframe_selector"])
+                    if frame_el:
+                        frame = await frame_el.content_frame()
+                        if frame:
+                            form_filled = await fill_prechat_form(frame, platform)
+                            if form_filled:
+                                await websocket.send_json(
+                                    {"type": "prechat_status", "action": "form_filled"}
+                                )
+                else:
+                    form_filled = await fill_prechat_form(page, platform)
+                    if form_filled:
+                        await websocket.send_json(
+                            {"type": "prechat_status", "action": "form_filled"}
+                        )
+            else:
+                # Platform-specific detection failed — try generic approach
+                await websocket.send_json(
+                    {"type": "debug", "message": "No known platform detected. Trying generic widget finder..."}
+                )
+                generic_widget = await find_widget(page, anthropic_client)
+
+                if generic_widget:
+                    use_generic = True
+                    platform = f"generic ({generic_widget.method})"
+                    await websocket.send_json(
+                        {
+                            "type": "widget_detected",
+                            "platform": platform,
+                            "description": generic_widget.description,
+                        }
+                    )
+
+                    # Execute open action if needed
+                    if generic_widget.open_action:
+                        try:
+                            await page.evaluate(generic_widget.open_action)
+                            await asyncio.sleep(2)
+                            await websocket.send_json(
+                                {"type": "prechat_status", "action": "widget_opened"}
+                            )
+                        except Exception:
+                            pass
+
+                    # Try filling pre-chat forms generically
+                    form_filled = await fill_prechat_form(page, "generic")
+                    if form_filled:
+                        await websocket.send_json(
+                            {"type": "prechat_status", "action": "form_filled"}
+                        )
+                else:
+                    await websocket.send_json(
+                        {
+                            "type": "widget_not_found",
+                            "message": "No chat widget detected (tried platform-specific and generic detection).",
+                        }
+                    )
+                    await websocket.send_json(
+                        {
+                            "type": "scan_complete",
+                            "report": {
+                                "url": url,
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                                "platform": None,
+                                "overall_grade": "Scan Incomplete",
+                                "overall_score": None,
+                                "categories": {},
+                                "findings": [],
+                                "message": "No chat widget detected.",
+                            },
+                        }
+                    )
+                    await browser.close()
+                    return
 
             await asyncio.sleep(4)
 
@@ -205,14 +241,76 @@ async def scan_endpoint(websocket: WebSocket):
                 await websocket.send_json({"type": "debug", "message": msg})
 
             findings: list[dict] = []
-            async for event in run_attacks(
-                page=page,
-                platform=platform,
-                anthropic_client=anthropic_client,
-                delay_seconds=2.0,
-                debug_cb=debug_cb,
-            ):
-                await websocket.send_json(event)
+
+            if use_generic and generic_widget:
+                # Use generic interactor
+                interactor = GenericChatInteractor(generic_widget, debug_cb=debug_cb)
+                from scanner.attack_runner import load_payloads
+                from scanner.response_analyzer import Verdict, judge_response
+
+                payloads = load_payloads()
+                for i, payload_data in enumerate(payloads):
+                    attack_id = i + 1
+                    await websocket.send_json({
+                        "type": "attack_sent",
+                        "id": attack_id,
+                        "category": payload_data["category"],
+                        "name": payload_data["name"],
+                        "payload": payload_data["payload"],
+                        "progress": f"{attack_id}/{len(payloads)}",
+                    })
+
+                    response_text = await interactor.send_and_read(page, payload_data["payload"])
+
+                    await websocket.send_json({
+                        "type": "attack_response",
+                        "id": attack_id,
+                        "response": response_text or "(no response / timeout)",
+                    })
+
+                    if response_text:
+                        verdict = await judge_response(
+                            client=anthropic_client,
+                            category=payload_data["category"],
+                            payload=payload_data["payload"],
+                            response=response_text,
+                        )
+                    else:
+                        verdict = Verdict(
+                            verdict="RESISTANT",
+                            confidence=0.5,
+                            evidence="No response received (timeout)",
+                        )
+
+                    event = {
+                        "type": "attack_verdict",
+                        "id": attack_id,
+                        "category": payload_data["category"],
+                        "verdict": verdict.verdict,
+                        "confidence": verdict.confidence,
+                        "evidence": verdict.evidence,
+                        "score": verdict.score,
+                    }
+                    await websocket.send_json(event)
+                    findings.append({
+                        "id": event["id"],
+                        "category": event["category"],
+                        "score": event["score"],
+                        "verdict": event["verdict"],
+                        "confidence": event["confidence"],
+                        "evidence": event["evidence"],
+                    })
+                    await asyncio.sleep(2.0)
+            else:
+                # Use platform-specific attack runner
+                async for event in run_attacks(
+                    page=page,
+                    platform=platform,
+                    anthropic_client=anthropic_client,
+                    delay_seconds=2.0,
+                    debug_cb=debug_cb,
+                ):
+                    await websocket.send_json(event)
 
                 if event["type"] == "attack_verdict":
                     findings.append(

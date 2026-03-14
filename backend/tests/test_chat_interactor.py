@@ -7,7 +7,7 @@ from scanner.widget_detector import PLATFORM_CONFIGS
 def test_chat_interactor_init():
     interactor = ChatInteractor(platform="tidio", config=PLATFORM_CONFIGS["tidio"])
     assert interactor.platform == "tidio"
-    assert interactor.config["uses_iframe"] is True
+    assert interactor.config["uses_iframe"] is False  # Tidio uses shadow DOM, not iframes
 
 
 def test_chat_interactor_has_send_message():
@@ -27,6 +27,7 @@ def test_chat_interactor_crisp_no_iframe():
     assert interactor.needs_iframe() is False
 
 
-def test_chat_interactor_tidio_uses_iframe():
+def test_chat_interactor_tidio_uses_shadow_dom():
     interactor = ChatInteractor(platform="tidio", config=PLATFORM_CONFIGS["tidio"])
-    assert interactor.needs_iframe() is True
+    assert interactor.needs_iframe() is False
+    assert interactor.config.get("shadow_host") == "#tidio-chat"
