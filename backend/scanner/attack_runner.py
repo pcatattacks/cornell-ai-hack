@@ -93,19 +93,43 @@ async def run_attacks(
         await asyncio.sleep(delay_seconds)
 
 
+async def _is_page_alive(page: Page) -> bool:
+    """Check if the browser page is still usable."""
+    try:
+        await page.evaluate("1 + 1")
+        return True
+    except Exception:
+        return False
+
+
 async def run_attacks_generic(
     page: Page,
     chat_target: ChatTarget,
     anthropic_client: anthropic.AsyncAnthropic,
     max_per_category: int | None = None,
-    delay_seconds: float = 2.0,
+    delay_seconds: float = 3.0,
     debug_cb=None,
 ) -> AsyncGenerator[dict, None]:
-    """Run attacks using the generic chat interface (vision-guided)."""
+    """Run attacks using the generic chat interface (vision-guided).
+
+    If the browser dies mid-scan, stops immediately and yields a
+    browser_died event so the orchestrator can generate a partial report.
+    """
     payloads = load_payloads(max_per_category=max_per_category)
+    consecutive_failures = 0
 
     for i, payload_data in enumerate(payloads):
         attack_id = i + 1
+
+        # Check if browser is still alive before each attack
+        if not await _is_page_alive(page):
+            yield {
+                "type": "browser_died",
+                "message": f"Browser session ended after {attack_id - 1} attacks. Generating partial report.",
+                "completed_attacks": attack_id - 1,
+                "total_attacks": len(payloads),
+            }
+            return
 
         yield {
             "type": "attack_sent",
@@ -116,10 +140,22 @@ async def run_attacks_generic(
             "progress": f"{attack_id}/{len(payloads)}",
         }
 
-        response_text = await generic_chat.send_and_read(
-            page, payload_data["payload"], chat_target,
-            anthropic_client=anthropic_client, debug_cb=debug_cb,
-        )
+        try:
+            response_text = await generic_chat.send_and_read(
+                page, payload_data["payload"], chat_target,
+                anthropic_client=anthropic_client, debug_cb=debug_cb,
+            )
+        except Exception as e:
+            # Browser may have died during send/read
+            if not await _is_page_alive(page):
+                yield {
+                    "type": "browser_died",
+                    "message": f"Browser session ended during attack {attack_id}. Generating partial report.",
+                    "completed_attacks": attack_id - 1,
+                    "total_attacks": len(payloads),
+                }
+                return
+            response_text = None
 
         yield {
             "type": "attack_response",
@@ -128,6 +164,7 @@ async def run_attacks_generic(
         }
 
         if response_text:
+            consecutive_failures = 0
             verdict = await judge_response(
                 client=anthropic_client,
                 category=payload_data["category"],
@@ -135,6 +172,7 @@ async def run_attacks_generic(
                 response=response_text,
             )
         else:
+            consecutive_failures += 1
             verdict = Verdict(
                 verdict="RESISTANT",
                 confidence=0.5,
@@ -150,5 +188,15 @@ async def run_attacks_generic(
             "evidence": verdict.evidence,
             "score": verdict.score,
         }
+
+        # If 5 consecutive failures, the chatbot is likely rate-limiting or dead
+        if consecutive_failures >= 5:
+            yield {
+                "type": "browser_died",
+                "message": f"5 consecutive timeouts after attack {attack_id}. Chatbot may be rate-limiting. Generating partial report.",
+                "completed_attacks": attack_id,
+                "total_attacks": len(payloads),
+            }
+            return
 
         await asyncio.sleep(delay_seconds)

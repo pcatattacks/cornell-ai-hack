@@ -176,6 +176,7 @@ async def scan_endpoint(websocket: WebSocket):
 
             # --- Run attacks ---
             findings: list[dict] = []
+            scan_aborted = False
 
             if chat_target:
                 # Vision-guided attack path
@@ -183,7 +184,7 @@ async def scan_endpoint(websocket: WebSocket):
                     page=page,
                     chat_target=chat_target,
                     anthropic_client=anthropic_client,
-                    delay_seconds=2.0,
+                    delay_seconds=3.0,
                     debug_cb=debug_cb,
                 ):
                     await websocket.send_json(event)
@@ -196,13 +197,15 @@ async def scan_endpoint(websocket: WebSocket):
                             "confidence": event["confidence"],
                             "evidence": event["evidence"],
                         })
+                    if event["type"] == "browser_died":
+                        scan_aborted = True
             else:
                 # Platform-specific attack path
                 async for event in run_attacks(
                     page=page,
                     platform=platform,
                     anthropic_client=anthropic_client,
-                    delay_seconds=2.0,
+                    delay_seconds=3.0,
                     debug_cb=debug_cb,
                 ):
                     await websocket.send_json(event)
@@ -216,10 +219,16 @@ async def scan_endpoint(websocket: WebSocket):
                             "evidence": event["evidence"],
                         })
 
-            # --- Score + Report ---
+            # --- Score + Report (works for both complete and partial scans) ---
             report = _build_report(url, platform, findings)
+            if scan_aborted:
+                report["scan_aborted"] = True
+                report["message"] = "Scan was interrupted (browser session ended or chatbot rate-limited). Report is based on completed attacks only."
             await websocket.send_json({"type": "scan_complete", "report": report})
-            await browser.close()
+            try:
+                await browser.close()
+            except Exception:
+                pass  # Browser may already be closed
 
     except WebSocketDisconnect:
         pass
