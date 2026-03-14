@@ -25,12 +25,28 @@ PLATFORM_CONFIGS = {
         "start_chat_command": """
             (() => {
                 const root = document.querySelector('#tidio-chat')?.shadowRoot;
-                if (!root) return false;
+                if (!root) return 'no_shadow_root';
+
+                // Strategy 1: Click "Chat with Lyro" or similar chat-start button
+                const allText = [...root.querySelectorAll('*')].filter(el => {
+                    const t = el.textContent?.trim().toLowerCase() || '';
+                    return /chat with|start chat|ask|talk to/.test(t) && el.children.length < 3;
+                });
+                if (allText.length) { allText[0].click(); return 'clicked_chat_button:' + allText[0].textContent.trim().substring(0,30); }
+
+                // Strategy 2: Click the operator element
                 const operator = root.querySelector('[data-testid="operator"]');
-                if (operator) { operator.click(); return true; }
-                const homeButtons = root.querySelectorAll('[data-testid="home"] button, [data-testid="home"] [role="button"], [data-testid="home"] [class*="button"]');
-                if (homeButtons.length) { homeButtons[0].click(); return true; }
-                return false;
+                if (operator) { operator.click(); return 'clicked_operator'; }
+
+                // Strategy 3: Click any button inside the home testid area
+                const homeButtons = root.querySelectorAll('[data-testid="home"] button, [data-testid="home"] [role="button"]');
+                if (homeButtons.length) { homeButtons[0].click(); return 'clicked_home_button'; }
+
+                // Strategy 4: Click widgetButton
+                const widgetBtn = root.querySelector('[data-testid="widgetButton"]');
+                if (widgetBtn) { widgetBtn.click(); return 'clicked_widgetButton'; }
+
+                return 'no_clickable_found';
             })()
         """,
     },

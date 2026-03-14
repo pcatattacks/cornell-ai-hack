@@ -85,6 +85,8 @@ function EventRow({ event }: { event: WSEvent }) {
         </div>
       );
     }
+    case "debug":
+      return <div className="text-gray-400 text-xs ml-4 font-mono">[debug] {String(event.message)}</div>;
     case "error":
       return <div className="text-red-600 font-semibold">Error: {String(event.message)}</div>;
     default:

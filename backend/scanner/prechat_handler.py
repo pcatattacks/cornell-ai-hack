@@ -39,7 +39,18 @@ async def dismiss_cookie_banner(page: Page) -> bool:
     return False
 
 
-async def fill_prechat_form(page_or_frame, platform: str) -> bool:
+async def fill_prechat_form(page_or_frame, platform: str, debug_cb=None) -> bool:
+    async def _log(msg):
+        if debug_cb:
+            await debug_cb(msg)
+
+    # Check if this platform uses shadow DOM — if so, search inside it
+    config = PLATFORM_CONFIGS.get(platform, {})
+    shadow_host = config.get("shadow_host")
+
+    if shadow_host:
+        return await _fill_shadow_prechat_form(page_or_frame, shadow_host, _log)
+
     try:
         email_script = """
         (() => {
@@ -71,17 +82,92 @@ async def fill_prechat_form(page_or_frame, platform: str) -> bool:
         return False
 
 
-async def open_widget(page: Page, platform: str) -> bool:
+async def _fill_shadow_prechat_form(page, shadow_host: str, _log) -> bool:
+    """Fill pre-chat forms inside a shadow DOM (e.g., Tidio email gate)."""
+    try:
+        result = await page.evaluate(f"""
+            (() => {{
+                const host = document.querySelector('{shadow_host}');
+                const root = host?.shadowRoot;
+                if (!root) return 'no_shadow_root';
+
+                // Find email inputs inside shadow DOM
+                const emailInputs = root.querySelectorAll('input[type="email"], input[name*="email"], input[placeholder*="email"], input[placeholder*="Email"]');
+                let filled = false;
+                for (const input of emailInputs) {{
+                    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                    setter.call(input, 'test@scanner.local');
+                    input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    filled = true;
+                }}
+
+                // Check any checkboxes (GDPR consent etc.)
+                const checkboxes = root.querySelectorAll('input[type="checkbox"]');
+                for (const cb of checkboxes) {{
+                    if (!cb.checked) {{
+                        cb.click();
+                    }}
+                }}
+
+                // Click send/submit button
+                const buttons = [...root.querySelectorAll('button, input[type="submit"]')];
+                const submitBtn = buttons.find(b => /^(send|submit|start|continue|begin)$/i.test(b.textContent?.trim() || b.value?.trim() || ''));
+                if (submitBtn) {{
+                    submitBtn.click();
+                    return 'submitted';
+                }}
+
+                return filled ? 'filled_no_submit' : 'no_email_input';
+            }})()
+        """)
+        await _log(f"fill_shadow_prechat_form: result={result}")
+
+        if result in ('submitted', 'filled_no_submit'):
+            await asyncio.sleep(3)  # Wait for form submission + chat view to load
+            return True
+        return False
+    except Exception as e:
+        await _log(f"fill_shadow_prechat_form: FAILED: {e}")
+        return False
+
+
+async def open_widget(page: Page, platform: str, debug_cb=None) -> bool:
     config = PLATFORM_CONFIGS.get(platform)
     if not config:
         return False
 
+    async def _log(msg):
+        if debug_cb:
+            await debug_cb(msg)
+
     try:
         await page.evaluate(config["open_command"])
-        await asyncio.sleep(1)
+        await _log(f"open_widget: executed open_command for {platform}")
+        await asyncio.sleep(2)
+
         if config.get("start_chat_command"):
-            await page.evaluate(config["start_chat_command"])
-            await asyncio.sleep(1)
+            result = await page.evaluate(config["start_chat_command"])
+            await _log(f"open_widget: start_chat_command result={result}")
+            await asyncio.sleep(2)
+
+        # Diagnostic: dump shadow DOM contents if shadow_host is configured
+        if config.get("shadow_host"):
+            diag = await page.evaluate(f"""
+                (() => {{
+                    const host = document.querySelector('{config["shadow_host"]}');
+                    if (!host) return 'shadow_host not found';
+                    const root = host.shadowRoot;
+                    if (!root) return 'no shadowRoot';
+                    const testids = [...root.querySelectorAll('[data-testid]')].map(e => e.getAttribute('data-testid')).slice(0, 20);
+                    const inputs = [...root.querySelectorAll('input,textarea,[contenteditable]')].map(e => e.tagName + '#' + e.id + '.' + (e.className||'').toString().substring(0,30) + '[placeholder=' + (e.placeholder||'') + ']').slice(0, 10);
+                    const buttons = [...root.querySelectorAll('button,[role="button"]')].map(e => (e.getAttribute('data-testid') || e.textContent.trim().substring(0,30))).slice(0, 10);
+                    return JSON.stringify({{testids, inputs, buttons}});
+                }})()
+            """)
+            await _log(f"open_widget: shadow DOM diagnostic: {diag}")
+
         return True
-    except Exception:
+    except Exception as e:
+        await _log(f"open_widget: FAILED: {e}")
         return False
