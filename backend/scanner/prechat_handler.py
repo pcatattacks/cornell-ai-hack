@@ -79,6 +79,9 @@ async def open_widget(page: Page, platform: str) -> bool:
     try:
         await page.evaluate(config["open_command"])
         await asyncio.sleep(1)
+        if config.get("start_chat_command"):
+            await page.evaluate(config["start_chat_command"])
+            await asyncio.sleep(1)
         return True
     except Exception:
         return False
