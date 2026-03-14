@@ -303,8 +303,12 @@ async def _read_response_via_vision(
     anthropic_client: anthropic.AsyncAnthropic,
     sent_message: str,
     _log: Callable,
+    _retry: bool = True,
 ) -> Optional[str]:
-    """Use Claude vision to read the chatbot's response from a screenshot."""
+    """Use Claude vision to read the chatbot's response from a screenshot.
+
+    If an overlay/dialog is blocking the view, attempts to dismiss it and retry.
+    """
     screenshot_b64 = await _take_screenshot(page)
     result = await _ask_claude(
         anthropic_client,
@@ -318,12 +322,11 @@ The chatbot's response is typically:
 - Styled differently from the user's message (different color, alignment, or avatar)
 - The LAST/MOST RECENT message from the bot, not older messages
 
-If you can see the chatbot's response, extract the FULL TEXT of that response.
-If the chatbot hasn't responded yet (still loading/typing), say so.
-If there is no visible response, say so.
+IMPORTANT: Check if there is an EMAIL FORM, POPUP, or OVERLAY blocking the chat conversation.
+If an overlay is blocking the view of the chatbot's response, report it.
 
 Respond with ONLY this JSON:
-{{"response_text": "<the chatbot's full response text>" or null, "status": "responded"|"typing"|"no_response", "description": "<what you see>"}}""",
+{{"response_text": "<the chatbot's full response text>" or null, "status": "responded"|"typing"|"no_response"|"blocked_by_overlay", "description": "<what you see>"}}""",
     )
 
     if not result:
@@ -335,6 +338,16 @@ Respond with ONLY this JSON:
 
     if status == "responded" and result.get("response_text"):
         return result["response_text"]
+
+    # If an overlay is blocking, try to dismiss it and retry
+    if status == "blocked_by_overlay" and _retry:
+        await _log("vision_read: overlay detected, attempting to dismiss...")
+        await _fill_blocking_form(page, _log)
+        await asyncio.sleep(2)
+        # Retry reading after dismissing
+        return await _read_response_via_vision(
+            page, anthropic_client, sent_message, _log, _retry=False
+        )
 
     return None
 
