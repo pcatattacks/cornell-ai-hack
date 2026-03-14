@@ -141,16 +141,16 @@ async def send_and_read(
         if debug_cb:
             await debug_cb(msg)
 
-    # Get baseline message count
-    _, count_before = await read_latest_response(page)
-    await _log(f"generic_chat: {count_before} existing messages before send")
+    # Get baseline: both text and count
+    text_before, count_before = await read_latest_response(page)
+    await _log(f"generic_chat: {count_before} existing messages before send, text_before={repr(text_before[:40]) if text_before else None}")
 
     # Send
     sent = await send_message(page, message, chat_target, debug_cb)
     if not sent:
         return None
 
-    # Poll for response
+    # Poll for response — detect EITHER new message elements OR text content change
     poll_interval_ms = 500
     max_polls = timeout_ms // poll_interval_ms
     last_text = None
@@ -163,7 +163,17 @@ async def send_and_read(
         if poll_num % 10 == 0:
             await _log(f"generic_chat: poll {poll_num}/{max_polls} — count={current_count}, text={repr(current_text[:50]) if current_text else None}")
 
-        if current_count > count_before and current_text:
+        # Detect a new response by EITHER:
+        # 1. New message element appeared (count increased)
+        # 2. Text content changed from what was there before we sent our message
+        has_new_content = False
+        if current_text:
+            if current_count > count_before:
+                has_new_content = True
+            elif current_text != text_before:
+                has_new_content = True
+
+        if has_new_content:
             if current_text == last_text:
                 stable_count += 1
                 if stable_count >= 2:
