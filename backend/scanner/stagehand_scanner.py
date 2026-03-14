@@ -8,7 +8,10 @@ import asyncio
 import os
 from typing import Optional, Callable, Awaitable
 
+from dotenv import load_dotenv
 from stagehand import AsyncStagehand
+
+load_dotenv()
 
 
 class StagehandScanner:
@@ -33,7 +36,7 @@ class StagehandScanner:
             model_api_key=os.getenv("ANTHROPIC_API_KEY"),
         )
 
-        self.session = await self.client.sessions.create(
+        self.session = await self.client.sessions.start(
             model_name="anthropic/claude-sonnet-4-20250514",
         )
         self.session_id = self.session.id
