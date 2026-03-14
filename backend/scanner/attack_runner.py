@@ -117,7 +117,8 @@ async def run_attacks_generic(
         }
 
         response_text = await generic_chat.send_and_read(
-            page, payload_data["payload"], chat_target, debug_cb=debug_cb,
+            page, payload_data["payload"], chat_target,
+            anthropic_client=anthropic_client, debug_cb=debug_cb,
         )
 
         yield {
