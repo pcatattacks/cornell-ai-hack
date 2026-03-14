@@ -2,6 +2,12 @@
 
 Uses Browserbase Stagehand v3 SDK for reliable browser automation.
 Stagehand handles iframes, shadow DOM, and complex DOM automatically.
+
+Best practices applied:
+- One action per act() call
+- Observe+act pattern for 2-3x speed
+- Specific action verbs (click, type, press)
+- Descriptive extract() schemas
 """
 
 import asyncio
@@ -22,14 +28,19 @@ class StagehandScanner:
         self.client: Optional[AsyncStagehand] = None
         self.session = None
         self.session_id: Optional[str] = None
+        self._chat_input_action = None  # cached observe result for observe+act pattern
 
     async def _log(self, msg: str):
         print(f"[stagehand] {msg}")
         if self._debug:
-            await self._debug(msg)
+            try:
+                await self._debug(msg)
+            except Exception:
+                pass  # WebSocket might be closed
 
     async def init(self):
         """Initialize Stagehand client and start a session."""
+        await self._log("Initializing Stagehand...")
         self.client = AsyncStagehand(
             browserbase_api_key=os.getenv("BROWSERBASE_API_KEY"),
             browserbase_project_id=os.getenv("BROWSERBASE_PROJECT_ID"),
@@ -56,123 +67,127 @@ class StagehandScanner:
         """Navigate to the target URL."""
         await self.session.navigate(url=url)
         await self._log(f"Navigated to {url}")
-        await asyncio.sleep(5)  # Wait for dynamic content / chat widgets to load
+        await asyncio.sleep(5)  # Wait for chat widgets to lazy-load
 
     async def dismiss_cookies(self):
         """Try to dismiss cookie consent banners."""
         try:
             await self.session.act(
-                input="If there is a cookie consent banner or popup, click Accept/Confirm/OK to dismiss it. If there is no cookie banner, do nothing.",
+                input="click the Accept or Confirm button on the cookie consent banner",
             )
-            await self._log("Cookie dismissal attempted")
+            await self._log("Cookie banner dismissed")
         except Exception:
-            pass
+            await self._log("No cookie banner found or already dismissed")
 
     async def find_and_open_chat(self) -> bool:
-        """Find and open the chat widget, navigating through any menus.
+        """Find and open the chat widget. Returns True if chat input is ready."""
 
-        Returns True if a chat input is ready for messaging.
-        """
-        # Step 1: Look for a chat widget
+        # Step 1: Observe for chat launcher
         await self._log("Looking for chat widget...")
         try:
             observe_resp = await self.session.observe(
-                instruction="Find a chat widget, chatbot launcher button, or AI assistant icon on this page. "
-                "Look for floating buttons in corners, chat bubbles, or 'Chat with us' buttons. "
-                "Do NOT select search bars, contact forms, or navigation links.",
+                instruction="find the chat widget launcher button or chatbot icon on this page",
             )
             results = observe_resp.data.result
             if not results:
-                await self._log("No chat widget found via observe")
+                await self._log("No chat widget found")
                 return False
             await self._log(f"Found {len(results)} potential chat elements")
-        except Exception as e:
-            await self._log(f"Observe failed: {e}")
-            return False
 
-        # Step 2: Click to open the widget
-        try:
-            await self.session.act(
-                input="Click on the chat widget launcher button or chat icon to open the chat conversation. "
-                "If the chat is already open showing a text input, do nothing.",
-            )
+            # Use observe+act pattern: act on the observed element (no LLM inference)
+            first_action = results[0].to_dict(exclude_none=True) if hasattr(results[0], 'to_dict') else results[0]
+            await self.session.act(input=first_action)
             await asyncio.sleep(3)
-            await self._log("Clicked chat launcher")
+            await self._log("Clicked chat launcher via observe+act")
         except Exception as e:
-            await self._log(f"Failed to click launcher: {e}")
+            await self._log(f"Chat launcher click failed: {type(e).__name__}: {e}")
+            # Try direct act as fallback
+            try:
+                await self.session.act(
+                    input="click the chat widget button in the bottom-right corner of the page",
+                )
+                await asyncio.sleep(3)
+                await self._log("Clicked chat launcher via direct act")
+            except Exception as e2:
+                await self._log(f"Direct act also failed: {e2}")
+                return False
 
-        # Step 3: Navigate through any menu/home screen to the conversation
+        # Step 2: Navigate through menus if needed, find the chat input
         for attempt in range(3):
-            # Check if we can find a text input for messages
             try:
                 observe_resp = await self.session.observe(
-                    instruction="Find a text input field where I can type a chat message. "
-                    "It should be a textarea or input with placeholder like 'Type your message', "
-                    "'Compose your message', 'Ask a question', 'Type here'. "
-                    "Do NOT select email inputs, search bars, or form fields.",
+                    instruction="find the text input field for typing chat messages in the chat widget",
                 )
                 results = observe_resp.data.result
                 if results:
+                    # Cache the input action for fast sending later
+                    self._chat_input_action = results[0].to_dict(exclude_none=True) if hasattr(results[0], 'to_dict') else results[0]
                     await self._log("Chat input found — ready to send messages")
                     return True
             except Exception:
                 pass
 
-            # Not ready — try clicking through menu options
+            # Try clicking through menu
             try:
                 await self.session.act(
-                    input="In the chat widget, click the option that will start a conversation. "
-                    "Look for buttons like 'Chat', 'Talk to us', 'Ask AI', 'Start conversation', 'Message us'. "
-                    "Avoid 'FAQ', 'Help Center', 'Documentation', 'Pricing' links.",
+                    input="click the button to start a new chat conversation in the chat widget",
                 )
                 await asyncio.sleep(3)
                 await self._log(f"Clicked menu option (attempt {attempt + 1})")
             except Exception:
                 break
 
-        # Step 4: Handle pre-chat forms (email gates)
+        # Step 3: Handle email/name forms
         try:
             await self.session.act(
-                input="If there is a form asking for email address or name before chatting, "
-                "fill the email field with 'test@scanner.local', check any consent checkboxes, "
-                "and click the Send/Submit/Start button. If there is no form, do nothing.",
+                input="type 'test@scanner.local' into the email input field in the chat widget",
+            )
+            await asyncio.sleep(0.5)
+            await self.session.act(
+                input="check any consent or GDPR checkboxes in the chat widget",
+            )
+            await asyncio.sleep(0.5)
+            await self.session.act(
+                input="click the Send or Submit button in the chat widget form",
             )
             await asyncio.sleep(3)
+            await self._log("Filled pre-chat form")
         except Exception:
             pass
 
-        # Final check for chat input
+        # Final check
         try:
             observe_resp = await self.session.observe(
-                instruction="Find a text input field for typing chat messages.",
+                instruction="find the text input field for typing chat messages",
             )
             results = observe_resp.data.result
             if results:
+                self._chat_input_action = results[0].to_dict(exclude_none=True) if hasattr(results[0], 'to_dict') else results[0]
                 await self._log("Chat input found after form handling")
                 return True
         except Exception:
             pass
 
-        await self._log("Could not find chat input after all attempts")
+        await self._log("Could not find chat input")
         return False
 
     async def send_message(self, message: str) -> bool:
         """Type a message into the chat input and send it."""
         try:
-            # Step 1: Type the message into the chat input
+            # Type the message
             await self.session.act(
-                input=f'Type the following text into the chat message input field: "{message}"',
+                input=f'type "{message}" into the chat message input field',
             )
             await self._log("Message typed")
 
-            # Step 2: Send it by pressing Enter or clicking the send button
+            # Send via Enter key
             await self.session.act(
-                input="Press the Enter key to send the message, or click the Send button if there is one next to the chat input.",
+                input="press the Enter key to send the chat message",
             )
             await self._log("Message sent")
             return True
         except Exception as e:
-            await self._log(f"Failed to send message: {e}")
+            await self._log(f"Failed to send message: {type(e).__name__}: {e}")
             return False
 
     async def read_response(self, sent_message: str) -> Optional[str]:
@@ -182,30 +197,28 @@ class StagehandScanner:
         for attempt in range(3):
             try:
                 extract_resp = await self.session.extract(
-                    instruction="Extract the most recent message from the chatbot or AI assistant in the chat widget. "
-                    "Look for the last message that is NOT from the user. "
-                    "Return the full text of that message.",
+                    instruction="extract the text of the most recent chatbot response message in the chat widget, not the user's message",
                     schema={
                         "type": "object",
                         "properties": {
-                            "response_text": {
+                            "chatbot_response": {
                                 "type": "string",
-                                "description": "The chatbot's most recent response message text",
+                                "description": "The full text of the chatbot's most recent reply message",
                             },
-                            "found": {
+                            "response_found": {
                                 "type": "boolean",
-                                "description": "Whether a chatbot response was found",
+                                "description": "True if a chatbot response message was found, false if only user messages are visible",
                             },
                         },
-                        "required": ["response_text", "found"],
+                        "required": ["chatbot_response", "response_found"],
                     },
                 )
                 result = extract_resp.data.result
-                await self._log(f"Extract result (attempt {attempt + 1}): {result}")
+                await self._log(f"Extract attempt {attempt + 1}: {result}")
 
                 if isinstance(result, dict):
-                    if result.get("found") and result.get("response_text", "").strip():
-                        text = result["response_text"].strip()
+                    if result.get("response_found") and result.get("chatbot_response", "").strip():
+                        text = result["chatbot_response"].strip()
                         await self._log(f"Response: {text[:60]}...")
                         return text
             except Exception as e:

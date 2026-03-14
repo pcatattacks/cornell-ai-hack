@@ -49,10 +49,12 @@ async def health():
 @app.websocket("/ws/scan")
 async def scan_endpoint(websocket: WebSocket):
     await websocket.accept()
+    print("[scan] WebSocket connected")
     scanner = None
 
     try:
         data = await websocket.receive_json()
+        print(f"[scan] Received request: {data}")
         url = data.get("url")
         if not url:
             await websocket.send_json({"type": "error", "message": "URL is required", "fatal": True})
