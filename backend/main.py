@@ -12,10 +12,22 @@ from playwright.async_api import async_playwright
 
 import anthropic
 
-from scanner.widget_detector import build_detection_script, parse_detection_results, PLATFORM_CONFIGS
-from scanner.prechat_handler import dismiss_cookie_banner, fill_prechat_form, open_widget
+from scanner.widget_detector import (
+    build_detection_script,
+    parse_detection_results,
+    PLATFORM_CONFIGS,
+)
+from scanner.prechat_handler import (
+    dismiss_cookie_banner,
+    fill_prechat_form,
+    open_widget,
+)
 from scanner.attack_runner import run_attacks
-from scanner.scoring import calculate_category_score, calculate_overall_score, score_to_grade
+from scanner.scoring import (
+    calculate_category_score,
+    calculate_overall_score,
+    score_to_grade,
+)
 
 load_dotenv()
 
@@ -49,17 +61,21 @@ async def scan_endpoint(websocket: WebSocket):
         data = await websocket.receive_json()
         url = data.get("url")
         if not url:
-            await websocket.send_json({"type": "error", "message": "URL is required", "fatal": True})
+            await websocket.send_json(
+                {"type": "error", "message": "URL is required", "fatal": True}
+            )
             return
 
         if not url.startswith("http"):
             url = f"https://{url}"
 
-        await websocket.send_json({
-            "type": "scan_start",
-            "url": url,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
+        await websocket.send_json(
+            {
+                "type": "scan_start",
+                "url": url,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        )
 
         anthropic_client = anthropic.AsyncAnthropic()
 
@@ -69,18 +85,21 @@ async def scan_endpoint(websocket: WebSocket):
 
             if browserbase_api_key and browserbase_project_id:
                 import httpx
+
                 async with httpx.AsyncClient() as http:
                     resp = await http.post(
                         "https://www.browserbase.com/v1/sessions",
                         headers={"x-bb-api-key": browserbase_api_key},
                         json={"projectId": browserbase_project_id},
                     )
-                    if resp.status_code != 200:
-                        await websocket.send_json({
-                            "type": "error",
-                            "message": f"Browserbase session creation failed: {resp.status_code} {resp.text}",
-                            "fatal": True,
-                        })
+                    if resp.status_code not in (200, 201):
+                        await websocket.send_json(
+                            {
+                                "type": "error",
+                                "message": f"Browserbase session creation failed: {resp.status_code} {resp.text}",
+                                "fatal": True,
+                            }
+                        )
                         return
                     session = resp.json()
                     session_id = session["id"]
@@ -95,19 +114,23 @@ async def scan_endpoint(websocket: WebSocket):
             page.set_default_timeout(30000)
 
             try:
-                await page.goto(url, wait_until="networkidle", timeout=30000)
+                await page.goto(url, wait_until="domcontentloaded", timeout=30000)
             except Exception as e:
-                await websocket.send_json({
-                    "type": "error",
-                    "message": f"Failed to load {url}: {str(e)}",
-                    "fatal": True,
-                })
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "message": f"Failed to load {url}: {str(e)}",
+                        "fatal": True,
+                    }
+                )
                 await browser.close()
                 return
 
             cookie_dismissed = await dismiss_cookie_banner(page)
             if cookie_dismissed:
-                await websocket.send_json({"type": "prechat_status", "action": "cookie_dismissed"})
+                await websocket.send_json(
+                    {"type": "prechat_status", "action": "cookie_dismissed"}
+                )
 
             await asyncio.sleep(3)
 
@@ -121,34 +144,42 @@ async def scan_endpoint(websocket: WebSocket):
             platform = parse_detection_results(results)
 
             if not platform:
-                await websocket.send_json({
-                    "type": "widget_not_found",
-                    "message": "No supported chat widget detected on this page.",
-                })
-                await websocket.send_json({
-                    "type": "scan_complete",
-                    "report": {
-                        "url": url,
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                        "platform": None,
-                        "overall_grade": "Scan Incomplete",
-                        "overall_score": None,
-                        "categories": {},
-                        "findings": [],
-                        "message": "No supported chat widget detected.",
-                    },
-                })
+                await websocket.send_json(
+                    {
+                        "type": "widget_not_found",
+                        "message": "No supported chat widget detected on this page.",
+                    }
+                )
+                await websocket.send_json(
+                    {
+                        "type": "scan_complete",
+                        "report": {
+                            "url": url,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "platform": None,
+                            "overall_grade": "Scan Incomplete",
+                            "overall_score": None,
+                            "categories": {},
+                            "findings": [],
+                            "message": "No supported chat widget detected.",
+                        },
+                    }
+                )
                 await browser.close()
                 return
 
-            await websocket.send_json({
-                "type": "widget_detected",
-                "platform": platform,
-            })
+            await websocket.send_json(
+                {
+                    "type": "widget_detected",
+                    "platform": platform,
+                }
+            )
 
             widget_opened = await open_widget(page, platform)
             if widget_opened:
-                await websocket.send_json({"type": "prechat_status", "action": "widget_opened"})
+                await websocket.send_json(
+                    {"type": "prechat_status", "action": "widget_opened"}
+                )
 
             config = PLATFORM_CONFIGS[platform]
             if config["uses_iframe"] and config.get("iframe_selector"):
@@ -158,13 +189,20 @@ async def scan_endpoint(websocket: WebSocket):
                     if frame:
                         form_filled = await fill_prechat_form(frame, platform)
                         if form_filled:
-                            await websocket.send_json({"type": "prechat_status", "action": "form_filled"})
+                            await websocket.send_json(
+                                {"type": "prechat_status", "action": "form_filled"}
+                            )
             else:
                 form_filled = await fill_prechat_form(page, platform)
                 if form_filled:
-                    await websocket.send_json({"type": "prechat_status", "action": "form_filled"})
+                    await websocket.send_json(
+                        {"type": "prechat_status", "action": "form_filled"}
+                    )
 
-            await asyncio.sleep(1)
+            await asyncio.sleep(4)
+
+            async def debug_cb(msg: str):
+                await websocket.send_json({"type": "debug", "message": msg})
 
             findings: list[dict] = []
             async for event in run_attacks(
@@ -172,18 +210,21 @@ async def scan_endpoint(websocket: WebSocket):
                 platform=platform,
                 anthropic_client=anthropic_client,
                 delay_seconds=2.0,
+                debug_cb=debug_cb,
             ):
                 await websocket.send_json(event)
 
                 if event["type"] == "attack_verdict":
-                    findings.append({
-                        "id": event["id"],
-                        "category": event["category"],
-                        "score": event["score"],
-                        "verdict": event["verdict"],
-                        "confidence": event["confidence"],
-                        "evidence": event["evidence"],
-                    })
+                    findings.append(
+                        {
+                            "id": event["id"],
+                            "category": event["category"],
+                            "score": event["score"],
+                            "verdict": event["verdict"],
+                            "confidence": event["confidence"],
+                            "evidence": event["evidence"],
+                        }
+                    )
 
             by_category: dict[str, list] = {}
             for f in findings:
@@ -191,7 +232,12 @@ async def scan_endpoint(websocket: WebSocket):
 
             category_scores = {}
             category_details = {}
-            for cat in ["system_prompt_extraction", "goal_hijacking", "data_leakage", "guardrail_bypass"]:
+            for cat in [
+                "system_prompt_extraction",
+                "goal_hijacking",
+                "data_leakage",
+                "guardrail_bypass",
+            ]:
                 cat_findings = by_category.get(cat, [])
                 score = calculate_category_score(cat_findings)
                 category_scores[cat] = score
@@ -199,9 +245,15 @@ async def scan_endpoint(websocket: WebSocket):
                     "score": score,
                     "grade": score_to_grade(score) if score is not None else "N/A",
                     "findings_count": len(cat_findings),
-                    "vulnerable_count": sum(1 for f in cat_findings if f.get("verdict") == "VULNERABLE"),
-                    "partial_count": sum(1 for f in cat_findings if f.get("verdict") == "PARTIAL"),
-                    "resistant_count": sum(1 for f in cat_findings if f.get("verdict") == "RESISTANT"),
+                    "vulnerable_count": sum(
+                        1 for f in cat_findings if f.get("verdict") == "VULNERABLE"
+                    ),
+                    "partial_count": sum(
+                        1 for f in cat_findings if f.get("verdict") == "PARTIAL"
+                    ),
+                    "resistant_count": sum(
+                        1 for f in cat_findings if f.get("verdict") == "RESISTANT"
+                    ),
                     "remediation": REMEDIATION.get(cat, ""),
                 }
 
@@ -211,7 +263,11 @@ async def scan_endpoint(websocket: WebSocket):
                 "url": url,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "platform": platform,
-                "overall_grade": score_to_grade(overall_score) if overall_score is not None else "Scan Incomplete",
+                "overall_grade": (
+                    score_to_grade(overall_score)
+                    if overall_score is not None
+                    else "Scan Incomplete"
+                ),
                 "overall_score": overall_score,
                 "categories": category_details,
                 "findings": findings,
@@ -224,10 +280,12 @@ async def scan_endpoint(websocket: WebSocket):
         pass
     except Exception as e:
         try:
-            await websocket.send_json({
-                "type": "error",
-                "message": str(e),
-                "fatal": True,
-            })
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "message": str(e),
+                    "fatal": True,
+                }
+            )
         except Exception:
             pass
