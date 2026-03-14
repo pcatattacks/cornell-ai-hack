@@ -294,15 +294,60 @@ async def read_latest_response(
         return None, 0
 
 
+async def _read_response_via_vision(
+    page: Page,
+    anthropic_client: anthropic.AsyncAnthropic,
+    sent_message: str,
+    _log: Callable,
+) -> Optional[str]:
+    """Use Claude vision to read the chatbot's response from a screenshot."""
+    screenshot_b64 = await _take_screenshot(page)
+    result = await _ask_claude(
+        anthropic_client,
+        screenshot_b64,
+        f"""CONTEXT: I just sent this message to a chatbot on this webpage: "{sent_message[:100]}"
+
+TASK: Look at the chat widget in the screenshot. Read the chatbot's most recent response message.
+
+The chatbot's response is typically:
+- In a message bubble or text block ABOVE the input field
+- Styled differently from the user's message (different color, alignment, or avatar)
+- The LAST/MOST RECENT message from the bot, not older messages
+
+If you can see the chatbot's response, extract the FULL TEXT of that response.
+If the chatbot hasn't responded yet (still loading/typing), say so.
+If there is no visible response, say so.
+
+Respond with ONLY this JSON:
+{{"response_text": "<the chatbot's full response text>" or null, "status": "responded"|"typing"|"no_response", "description": "<what you see>"}}""",
+    )
+
+    if not result:
+        await _log("vision_read: got no result from Claude")
+        return None
+
+    status = result.get("status", "no_response")
+    await _log(f"vision_read: status={status}, desc={result.get('description', '')[:60]}")
+
+    if status == "responded" and result.get("response_text"):
+        return result["response_text"]
+
+    return None
+
+
 async def send_and_read(
     page: Page,
     message: str,
     chat_target: ChatTarget,
     anthropic_client: Optional[anthropic.AsyncAnthropic] = None,
     debug_cb: Optional[Callable[[str], Awaitable[None]]] = None,
-    timeout_ms: int = 30000,
+    timeout_ms: int = 15000,
 ) -> Optional[str]:
-    """Send a message and wait for the bot response."""
+    """Send a message and wait for the bot response.
+
+    Uses DOM polling first (fast, free). If DOM polling finds nothing after
+    the timeout, falls back to vision-based reading (screenshot + Claude).
+    """
     async def _log(msg: str):
         if debug_cb:
             await debug_cb(msg)
@@ -316,7 +361,7 @@ async def send_and_read(
     if not sent:
         return None
 
-    # Poll for response
+    # Phase 1: DOM polling (fast, free)
     poll_interval_ms = 500
     max_polls = timeout_ms // poll_interval_ms
     last_text = None
@@ -340,11 +385,21 @@ async def send_and_read(
             if current_text == last_text:
                 stable_count += 1
                 if stable_count >= 2:
-                    await _log(f"generic_chat: response stable after {poll_num} polls")
+                    await _log(f"generic_chat: response stable after {poll_num} polls (DOM)")
                     return current_text
             else:
                 stable_count = 0
                 last_text = current_text
 
-    await _log(f"generic_chat: timed out. last_text={repr(last_text[:50]) if last_text else None}")
+    # Phase 2: Vision fallback — DOM couldn't read the response, ask Claude to read the screenshot
+    if anthropic_client:
+        await _log("generic_chat: DOM polling found nothing. Trying vision-based reading...")
+        # Wait a bit more for any slow responses to finish rendering
+        await asyncio.sleep(3)
+        vision_text = await _read_response_via_vision(page, anthropic_client, message, _log)
+        if vision_text:
+            await _log(f"generic_chat: vision read response: {repr(vision_text[:60])}")
+            return vision_text
+
+    await _log(f"generic_chat: no response found (DOM + vision). last_text={repr(last_text[:50]) if last_text else None}")
     return last_text
