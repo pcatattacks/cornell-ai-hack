@@ -177,7 +177,7 @@ class StagehandScanner:
 
     async def read_response(self, sent_message: str) -> Optional[str]:
         """Read the chatbot's response after sending a message."""
-        await asyncio.sleep(5)  # Wait for response to render
+        await asyncio.sleep(3)  # Wait for chatbot to generate response
 
         for attempt in range(3):
             try:
@@ -212,7 +212,7 @@ class StagehandScanner:
                 await self._log(f"Extract attempt {attempt + 1} failed: {type(e).__name__}: {e}")
 
             if attempt < 2:
-                await asyncio.sleep(5)
+                await asyncio.sleep(3)
 
         await self._log("No response received")
         return None
