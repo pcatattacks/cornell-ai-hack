@@ -27,14 +27,18 @@ async def send_message(
         if debug_cb:
             await debug_cb(msg)
 
-    # Strategy 1: Playwright locator (most reliable when it works)
+    # Strategy 1: Click input + keyboard.type (simulates real keystrokes)
+    # Many chat frameworks (React, Vue, Crisp) only process actual keyboard events,
+    # not programmatic .fill() or .value= changes.
     if chat_target.input_selector:
         try:
             locator = page.locator(chat_target.input_selector).first
             await locator.click(timeout=5000)
-            await locator.fill(message, timeout=5000)
-            await locator.press("Enter")
-            await _log(f"generic_chat: sent via selector '{chat_target.input_selector}'")
+            await page.keyboard.press("Control+a")
+            await page.keyboard.press("Backspace")
+            await page.keyboard.type(message, delay=5)
+            await page.keyboard.press("Enter")
+            await _log(f"generic_chat: sent via selector click + keyboard.type")
             return True
         except Exception as e:
             error_msg = str(e)
@@ -45,37 +49,37 @@ async def send_message(
                 try:
                     locator = page.locator(chat_target.input_selector).first
                     await locator.click(timeout=5000, force=True)
-                    await locator.fill(message, timeout=5000)
-                    await locator.press("Enter")
-                    await _log("generic_chat: sent via force click (bypassed overlay)")
+                    await page.keyboard.press("Control+a")
+                    await page.keyboard.press("Backspace")
+                    await page.keyboard.type(message, delay=5)
+                    await page.keyboard.press("Enter")
+                    await _log("generic_chat: sent via force click + keyboard.type")
                     return True
                 except Exception as e2:
                     await _log(f"generic_chat: force click also failed — {type(e2).__name__}")
 
-    # Strategy 2: JS direct focus + value set (bypasses all overlays and event interception)
+    # Strategy 2: JS focus + keyboard.type (bypasses overlays, uses real keystrokes)
     if chat_target.input_selector:
         try:
-            safe_msg = message.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
-            result = await page.evaluate(f"""
+            focused = await page.evaluate(f"""
                 (() => {{
                     const el = document.querySelector('{chat_target.input_selector}');
-                    if (!el) return 'not_found';
+                    if (!el) return false;
                     el.focus();
-                    el.value = `{safe_msg}`;
-                    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                    // Try submitting via Enter key event
-                    el.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }}));
-                    el.dispatchEvent(new KeyboardEvent('keyup', {{ key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }}));
-                    return 'sent';
+                    el.click();
+                    return true;
                 }})()
             """)
-            if result == "sent":
-                await _log("generic_chat: sent via JS direct focus + value set")
+            if focused:
+                await page.keyboard.press("Control+a")
+                await page.keyboard.press("Backspace")
+                await page.keyboard.type(message, delay=5)
+                await page.keyboard.press("Enter")
+                await _log("generic_chat: sent via JS focus + keyboard.type")
                 return True
-            await _log(f"generic_chat: JS focus result: {result}")
+            await _log("generic_chat: JS focus — element not found")
         except Exception as e:
-            await _log(f"generic_chat: JS focus failed: {e}")
+            await _log(f"generic_chat: JS focus+keyboard failed: {e}")
 
     # Strategy 3: Click coordinates + keyboard type
     if chat_target.input_coordinates:
@@ -85,7 +89,7 @@ async def send_message(
             await asyncio.sleep(0.3)
             focused_tag = await page.evaluate("document.activeElement?.tagName || 'none'")
             await _log(f"generic_chat: clicked ({x}, {y}), focused: {focused_tag}")
-            await page.keyboard.type(message, delay=10)
+            await page.keyboard.type(message, delay=5)
             await page.keyboard.press("Enter")
             await _log("generic_chat: sent via coordinate click + keyboard")
             return True
