@@ -82,6 +82,9 @@ async def scan_endpoint(websocket: WebSocket):
                 return
 
             page.set_default_timeout(30000)
+            # Set consistent viewport so Claude's coordinate estimates work across environments
+            await page.set_viewport_size({"width": 1280, "height": 720})
+            await debug_cb(f"Viewport set to 1280x720. Actual: {page.viewport_size}")
 
             try:
                 await page.goto(url, wait_until="domcontentloaded", timeout=30000)

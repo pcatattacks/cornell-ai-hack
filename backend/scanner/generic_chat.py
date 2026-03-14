@@ -14,6 +14,14 @@ from playwright.async_api import Page
 from scanner.vision_navigator import ChatTarget, _ask_claude, _take_screenshot
 
 
+def _get_frame(page: Page, chat_target: ChatTarget):
+    """Get the correct frame to interact with based on ChatTarget.frame_index."""
+    if chat_target.frame_index is not None and chat_target.frame_index > 0:
+        if chat_target.frame_index < len(page.frames):
+            return page.frames[chat_target.frame_index]
+    return page  # main frame
+
+
 async def send_message(
     page: Page,
     message: str,
@@ -27,12 +35,16 @@ async def send_message(
         if debug_cb:
             await debug_cb(msg)
 
+    target_frame = _get_frame(page, chat_target)
+    frame_label = f"frame[{chat_target.frame_index}]" if chat_target.frame_index else "main"
+    await _log(f"generic_chat: using {frame_label} for interaction")
+
     # Strategy 1: Click input + keyboard.type (simulates real keystrokes)
     # Many chat frameworks (React, Vue, Crisp) only process actual keyboard events,
     # not programmatic .fill() or .value= changes.
     if chat_target.input_selector:
         try:
-            locator = page.locator(chat_target.input_selector).first
+            locator = target_frame.locator(chat_target.input_selector).first
             await locator.click(timeout=5000)
             await page.keyboard.press("Control+a")
             await page.keyboard.press("Backspace")
@@ -47,7 +59,7 @@ async def send_message(
             # If overlay is intercepting, try force click
             if "intercepts pointer events" in error_msg:
                 try:
-                    locator = page.locator(chat_target.input_selector).first
+                    locator = target_frame.locator(chat_target.input_selector).first
                     await locator.click(timeout=5000, force=True)
                     await page.keyboard.press("Control+a")
                     await page.keyboard.press("Backspace")
@@ -61,7 +73,7 @@ async def send_message(
     # Strategy 2: JS focus + keyboard.type (bypasses overlays, uses real keystrokes)
     if chat_target.input_selector:
         try:
-            focused = await page.evaluate(f"""
+            focused = await target_frame.evaluate(f"""
                 (() => {{
                     const el = document.querySelector('{chat_target.input_selector}');
                     if (!el) return false;
@@ -176,6 +188,8 @@ Respond with ONLY this JSON:
         return ChatTarget(
             input_selector=None,
             input_coordinates=(coords["x"], coords["y"]),
+            frame_index=None,
+            frame_url=None,
             description=f"Relocated input at ({coords['x']}, {coords['y']})",
             method="coordinates",
         )
@@ -235,6 +249,7 @@ async def _fill_blocking_form(page: Page, _log: Callable):
 
 async def read_latest_response(
     page: Page,
+    chat_target: Optional[ChatTarget] = None,
     debug_cb: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> tuple[Optional[str], int]:
     """Read the latest bot response from the chat widget.
@@ -290,12 +305,26 @@ async def read_latest_response(
         })()
     """
 
-    try:
-        raw = await page.evaluate(read_script)
-        result = json.loads(raw)
-        return result.get("text"), result.get("count", 0)
-    except Exception:
-        return None, 0
+    # Search the chat's frame first, then fall back to all frames
+    frames_to_search = []
+    if chat_target and chat_target.frame_index is not None:
+        if chat_target.frame_index < len(page.frames):
+            frames_to_search.append(page.frames[chat_target.frame_index])
+    if not frames_to_search:
+        frames_to_search = page.frames
+
+    for frame in frames_to_search:
+        try:
+            raw = await frame.evaluate(read_script)
+            result = json.loads(raw)
+            text = result.get("text")
+            count = result.get("count", 0)
+            if text or count > 0:
+                return text, count
+        except Exception:
+            continue
+
+    return None, 0
 
 
 async def _read_response_via_vision(
@@ -370,7 +399,7 @@ async def send_and_read(
             await debug_cb(msg)
 
     # Get baseline
-    text_before, count_before = await read_latest_response(page)
+    text_before, count_before = await read_latest_response(page, chat_target=chat_target)
     await _log(f"generic_chat: {count_before} msgs before, text_before={repr(text_before[:40]) if text_before else None}")
 
     # Send
@@ -386,7 +415,7 @@ async def send_and_read(
 
     for poll_num in range(max_polls):
         await asyncio.sleep(poll_interval_ms / 1000)
-        current_text, current_count = await read_latest_response(page)
+        current_text, current_count = await read_latest_response(page, chat_target=chat_target)
 
         if poll_num % 10 == 0:
             await _log(f"generic_chat: poll {poll_num}/{max_polls} — count={current_count}, text={repr(current_text[:50]) if current_text else None}")

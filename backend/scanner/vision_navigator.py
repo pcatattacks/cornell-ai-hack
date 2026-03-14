@@ -20,10 +20,12 @@ from playwright.async_api import Page
 @dataclass
 class ChatTarget:
     """Describes a located chat input, ready for message sending."""
-    input_selector: Optional[str]  # CSS selector if we found one
+    input_selector: Optional[str]  # CSS selector within the target frame
     input_coordinates: Optional[tuple[int, int]]  # (x, y) fallback
+    frame_index: Optional[int]  # index into page.frames (None or 0 = main frame)
+    frame_url: Optional[str]  # iframe src for debugging
     description: str  # What Claude saw
-    method: str  # "selector" or "coordinates"
+    method: str  # "selector" | "coordinates" | "tab"
 
 
 async def navigate_to_chat(
@@ -83,7 +85,8 @@ Respond with ONLY this JSON:
 
             if state == "open" and result.get("has_input"):
                 # Widget is open with input visible — locate it
-                return await _locate_input(page, anthropic_client, screenshot_b64, _log)
+                bounds = result.get("widget_location", {}).get("bounding_box")
+                return await _locate_input(page, anthropic_client, screenshot_b64, _log, widget_bounds=bounds)
 
             if state in ("closed", "menu") and result.get("click"):
                 action = "launcher" if state == "closed" else "menu item"
@@ -140,7 +143,8 @@ Respond with ONLY this JSON:
 
             if status == "A":
                 # Chat input found
-                return await _locate_input(page, anthropic_client, screenshot_b64, _log)
+                bounds = result.get("widget_bounds")
+                return await _locate_input(page, anthropic_client, screenshot_b64, _log, widget_bounds=bounds)
 
             elif status == "B":
                 # Pre-chat form — fill it
@@ -171,113 +175,236 @@ async def _locate_input(
     anthropic_client: anthropic.AsyncAnthropic,
     screenshot_b64: str,
     _log: Callable,
+    widget_bounds: Optional[dict] = None,
 ) -> Optional[ChatTarget]:
-    """Once we know a chat input is visible, find it precisely."""
+    """Find the chat input precisely using exhaustive DOM search across all frames.
 
-    # First try DOM inspection — look for visible textareas/inputs
-    dom_result = await page.evaluate("""
-        (() => {
-            // Check regular DOM
-            const candidates = document.querySelectorAll('textarea, input[type="text"], [contenteditable="true"]');
-            const visible = [...candidates].filter(el => {
-                const rect = el.getBoundingClientRect();
-                return rect.width > 30 && rect.height > 15 && el.offsetParent !== null;
-            });
+    Strategy:
+    1. Search ALL frames (main + iframes) and shadow roots for input elements
+    2. Filter by widget bounds proximity
+    3. If multiple candidates, ask Claude to pick the chat input
+    4. If zero candidates, try Tab-cycling fallback
+    """
+    # Step 1: Exhaustive search across all frames
+    candidates = await _find_all_inputs(page, _log)
+    await _log(f"locate_input: found {len(candidates)} input candidates across {len(page.frames)} frames")
 
-            // Also check shadow DOMs
-            const shadowHosts = document.querySelectorAll('*');
-            for (const host of shadowHosts) {
-                if (host.shadowRoot) {
-                    const shadowCandidates = host.shadowRoot.querySelectorAll('textarea, input[type="text"], [contenteditable="true"]');
-                    const shadowVisible = [...shadowCandidates].filter(el => {
-                        const rect = el.getBoundingClientRect();
-                        return rect.width > 30 && rect.height > 15;
-                    });
-                    for (const el of shadowVisible) {
-                        visible.push(el);
-                    }
-                }
-            }
+    if not candidates:
+        # Tab-cycling fallback
+        await _log("locate_input: no candidates found, trying Tab cycling")
+        tab_result = await _tab_to_input(page, widget_bounds, _log)
+        if tab_result:
+            return tab_result
+        await _log("locate_input: Tab cycling failed too")
+        return None
 
-            if (visible.length === 0) return JSON.stringify({found: false});
+    # Step 2: Filter by widget bounds if available
+    if widget_bounds:
+        filtered = _filter_by_bounds(candidates, widget_bounds)
+        await _log(f"locate_input: {len(filtered)} candidates after bounds filter (from {len(candidates)})")
+        if filtered:
+            candidates = filtered
 
-            // Pick the best candidate — prefer ones with chat-related placeholders
-            let best = visible[0];
-            for (const el of visible) {
-                const placeholder = (el.placeholder || el.getAttribute('aria-label') || '').toLowerCase();
-                if (/message|chat|type|ask|write/.test(placeholder)) {
-                    best = el;
-                    break;
-                }
-            }
+    # Step 3: Pick the right input
+    if len(candidates) == 1:
+        selected = candidates[0]
+        await _log(f"locate_input: single candidate — {selected['tag']} placeholder='{selected['placeholder']}' frame={selected['frame_index']}")
+    else:
+        selected = await _pick_chat_input(candidates, anthropic_client, _log)
+        if not selected:
+            selected = candidates[0]  # fallback to first
 
-            const rect = best.getBoundingClientRect();
-            return JSON.stringify({
-                found: true,
-                tag: best.tagName,
-                id: best.id || null,
-                placeholder: best.placeholder || best.getAttribute('aria-label') || '',
-                rect: {x: Math.round(rect.x + rect.width/2), y: Math.round(rect.y + rect.height/2), w: Math.round(rect.width), h: Math.round(rect.height)},
-                inShadowDom: best.getRootNode() !== document,
-            });
-        })()
-    """)
-
-    try:
-        info = json.loads(dom_result)
-    except Exception:
-        info = {"found": False}
-
-    if info.get("found"):
-        await _log(f"vision: found input via DOM — {info['tag']} placeholder='{info.get('placeholder', '')}' at ({info['rect']['x']}, {info['rect']['y']})")
-
-        # Build a selector if possible
-        selector = None
-        if info.get("id"):
-            selector = f"#{info['id']}"
-        elif info.get("placeholder"):
-            selector = f"{info['tag'].lower()}[placeholder*=\"{info['placeholder'][:20]}\"]"
-
-        if info.get("inShadowDom"):
-            # Can't use CSS selectors for shadow DOM — use coordinates
-            return ChatTarget(
-                input_selector=None,
-                input_coordinates=(info["rect"]["x"], info["rect"]["y"]),
-                description=f"Shadow DOM {info['tag']} with placeholder '{info.get('placeholder', '')}'",
-                method="coordinates",
-            )
-
-        return ChatTarget(
-            input_selector=selector,
-            input_coordinates=(info["rect"]["x"], info["rect"]["y"]),
-            description=f"{info['tag']} with placeholder '{info.get('placeholder', '')}'",
-            method="selector" if selector else "coordinates",
-        )
-
-    # DOM inspection failed — ask Claude for coordinates
-    await _log("vision: DOM inspection found no input, asking Claude for coordinates")
-    result = await _ask_claude(
-        anthropic_client,
-        screenshot_b64,
-        """I need to find the exact position of the chat message input field.
-Look at the chat widget and find the text input area where I would type a message.
-
-What are the pixel coordinates of the CENTER of the input field?
-
-Respond with ONLY this JSON:
-{"found": true/false, "x": <number>, "y": <number>, "description": "<what the input looks like>"}""",
+    # Step 4: Build ChatTarget
+    selector = _build_selector(selected)
+    return ChatTarget(
+        input_selector=selector,
+        input_coordinates=(selected["cx"], selected["cy"]),
+        frame_index=selected["frame_index"],
+        frame_url=selected.get("frame_url"),
+        description=f"{selected['tag']} placeholder='{selected['placeholder']}' in frame {selected['frame_index']}",
+        method="selector" if selector else "coordinates",
     )
 
-    if result and result.get("found"):
-        await _log(f"vision: Claude located input at ({result['x']}, {result['y']})")
-        return ChatTarget(
-            input_selector=None,
-            input_coordinates=(result["x"], result["y"]),
-            description=result.get("description", ""),
-            method="coordinates",
-        )
 
-    await _log("vision: could not locate chat input")
+async def _find_all_inputs(page: Page, _log: Callable) -> list[dict]:
+    """Search ALL frames (main + iframes) and shadow roots for text input elements."""
+    candidates = []
+
+    SEARCH_JS = """
+        (() => {
+            function searchRoot(root) {
+                const found = [];
+                const els = root.querySelectorAll('textarea, input[type="text"], input:not([type]), [contenteditable="true"]');
+                for (const el of els) {
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width < 20 || rect.height < 10) continue;
+                    const style = window.getComputedStyle(el);
+                    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') continue;
+                    // Skip inputs that are clearly not chat (password, hidden, etc.)
+                    if (el.type && ['password', 'hidden', 'submit', 'button', 'checkbox', 'radio', 'file'].includes(el.type)) continue;
+                    found.push({
+                        tag: el.tagName,
+                        id: el.id || null,
+                        name: el.name || null,
+                        placeholder: el.placeholder || el.getAttribute('aria-label') || '',
+                        type: el.type || null,
+                        rect: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) },
+                        cx: Math.round(rect.x + rect.width / 2),
+                        cy: Math.round(rect.y + rect.height / 2),
+                    });
+                }
+                // Check shadow roots
+                const allEls = root.querySelectorAll('*');
+                for (const host of allEls) {
+                    if (host.shadowRoot) {
+                        found.push(...searchRoot(host.shadowRoot));
+                    }
+                }
+                return found;
+            }
+            return JSON.stringify(searchRoot(document));
+        })()
+    """
+
+    for frame_idx, frame in enumerate(page.frames):
+        try:
+            raw = await frame.evaluate(SEARCH_JS)
+            frame_candidates = json.loads(raw)
+            for c in frame_candidates:
+                c["frame_index"] = frame_idx
+                c["frame_url"] = frame.url
+                c["frame_name"] = frame.name or None
+            candidates.extend(frame_candidates)
+        except Exception:
+            continue  # Frame may be cross-origin or detached
+
+    return candidates
+
+
+def _filter_by_bounds(candidates: list[dict], widget_bounds: dict) -> list[dict]:
+    """Filter candidates to those inside or near the widget bounding box."""
+    bx = widget_bounds.get("x", 0)
+    by = widget_bounds.get("y", 0)
+    bw = widget_bounds.get("width", 9999)
+    bh = widget_bounds.get("height", 9999)
+    margin = 100  # generous tolerance
+
+    filtered = []
+    for c in candidates:
+        if (bx - margin <= c["cx"] <= bx + bw + margin and
+                by - margin <= c["cy"] <= by + bh + margin):
+            filtered.append(c)
+    return filtered
+
+
+async def _pick_chat_input(
+    candidates: list[dict],
+    anthropic_client: anthropic.AsyncAnthropic,
+    _log: Callable,
+) -> Optional[dict]:
+    """Ask Claude to pick which input is the chat message input."""
+    desc_lines = []
+    for i, c in enumerate(candidates):
+        frame_label = f"iframe({c['frame_url'][:40]})" if c["frame_index"] > 0 else "main page"
+        desc_lines.append(
+            f"[{i}] {c['tag']} placeholder='{c['placeholder']}' id='{c['id']}' "
+            f"name='{c['name']}' size={c['rect']['w']}x{c['rect']['h']} "
+            f"at ({c['cx']},{c['cy']}) in {frame_label}"
+        )
+    desc = "\n".join(desc_lines)
+
+    await _log(f"locate_input: asking Claude to pick from {len(candidates)} candidates")
+
+    try:
+        message = await anthropic_client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=50,
+            messages=[{
+                "role": "user",
+                "content": f"""Which of these input elements is the CHAT MESSAGE INPUT for typing messages to an AI chatbot?
+
+{desc}
+
+Consider: chat inputs typically have placeholders like "Type your message", "Compose", "Ask", etc.
+Search bars have "Search". Email fields have "email". Login fields have "username/password".
+
+Respond with ONLY the index number (e.g., "2").""",
+            }],
+        )
+        raw = message.content[0].text.strip()
+        idx = int(raw)
+        if 0 <= idx < len(candidates):
+            selected = candidates[idx]
+            await _log(f"locate_input: Claude picked [{idx}] — {selected['tag']} placeholder='{selected['placeholder']}'")
+            return selected
+    except Exception as e:
+        await _log(f"locate_input: Claude pick failed: {e}")
+
+    return None
+
+
+async def _tab_to_input(
+    page: Page,
+    widget_bounds: Optional[dict],
+    _log: Callable,
+    max_tabs: int = 20,
+) -> Optional[ChatTarget]:
+    """Click in widget area then Tab until we focus a text input."""
+    # Click in the center of the widget bounds to start
+    if widget_bounds:
+        cx = widget_bounds.get("x", 640) + widget_bounds.get("width", 200) // 2
+        cy = widget_bounds.get("y", 400) + widget_bounds.get("height", 200) // 2
+        await page.mouse.click(cx, cy)
+        await asyncio.sleep(0.3)
+
+    for i in range(max_tabs):
+        await page.keyboard.press("Tab")
+        await asyncio.sleep(0.15)
+
+        info = await page.evaluate("""
+            (() => {
+                const el = document.activeElement;
+                if (!el) return null;
+                const tag = el.tagName.toLowerCase();
+                const isTextInput = (tag === 'textarea' || (tag === 'input' && (!el.type || el.type === 'text' || el.type === 'search')) || el.contentEditable === 'true');
+                if (!isTextInput) return null;
+                const rect = el.getBoundingClientRect();
+                return {
+                    tag: el.tagName,
+                    id: el.id || null,
+                    placeholder: el.placeholder || el.getAttribute('aria-label') || '',
+                    cx: Math.round(rect.x + rect.width / 2),
+                    cy: Math.round(rect.y + rect.height / 2),
+                };
+            })()
+        """)
+
+        if info:
+            await _log(f"locate_input: Tab #{i} focused {info['tag']} placeholder='{info['placeholder']}'")
+            selector = _build_selector(info)
+            return ChatTarget(
+                input_selector=selector,
+                input_coordinates=(info["cx"], info["cy"]),
+                frame_index=0,  # Tab focuses in the active frame context
+                frame_url=None,
+                description=f"Tab-focused {info['tag']} placeholder='{info['placeholder']}'",
+                method="selector" if selector else "tab",
+            )
+
+    return None
+
+
+def _build_selector(info: dict) -> Optional[str]:
+    """Build a CSS selector from candidate info."""
+    if info.get("id"):
+        return f"#{info['id']}"
+    if info.get("placeholder"):
+        p = info["placeholder"][:20].replace('"', '\\"')
+        tag = info.get("tag", "").lower() or "*"
+        return f'{tag}[placeholder*="{p}"]'
+    if info.get("name"):
+        tag = info.get("tag", "").lower() or "*"
+        return f'{tag}[name="{info["name"]}"]'
     return None
 
 
