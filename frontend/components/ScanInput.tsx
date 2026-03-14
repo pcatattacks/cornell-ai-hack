@@ -34,7 +34,7 @@ export function ScanInput({ onStartScan, disabled }: ScanInputProps) {
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             placeholder="Enter website URL (e.g., https://example.com)"
-            className="flex-1 px-4 py-3 border border-gray-300 rounded-lg text-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            className="flex-1 px-4 py-3 border border-gray-300 rounded-lg text-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             disabled={disabled}
           />
           <button
