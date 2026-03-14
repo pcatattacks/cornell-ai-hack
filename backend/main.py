@@ -77,11 +77,10 @@ async def scan_endpoint(websocket: WebSocket):
 
         # --- Launch browser ---
         async with async_playwright() as pw:
-            browser = await _launch_browser(pw, websocket)
-            if not browser:
+            browser, page = await _launch_browser(pw, websocket, debug_cb)
+            if not browser or not page:
                 return
 
-            page = await browser.new_page()
             page.set_default_timeout(30000)
 
             try:
@@ -231,8 +230,11 @@ async def scan_endpoint(websocket: WebSocket):
                 pass  # Browser may already be closed
 
     except WebSocketDisconnect:
-        pass
+        print("[scan] WebSocket disconnected")
     except Exception as e:
+        print(f"[scan] ERROR: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
         try:
             await websocket.send_json({"type": "error", "message": str(e), "fatal": True})
         except Exception:
@@ -241,12 +243,22 @@ async def scan_endpoint(websocket: WebSocket):
 
 # --- Helper functions ---
 
-async def _launch_browser(pw, websocket):
-    """Launch browser — Browserbase remote or local fallback."""
+async def _launch_browser(pw, websocket, debug_cb=None):
+    """Launch browser and return (browser, page) tuple.
+
+    Uses Browserbase (remote) if keys are set, otherwise local Chromium.
+    CDP connections return an existing context/page, so we handle both cases.
+    """
+    async def _log(msg):
+        print(f"[launch_browser] {msg}")
+        if debug_cb:
+            await debug_cb(msg)
+
     browserbase_api_key = os.getenv("BROWSERBASE_API_KEY")
     browserbase_project_id = os.getenv("BROWSERBASE_PROJECT_ID")
 
     if browserbase_api_key and browserbase_project_id:
+        await _log("Using Browserbase remote browser")
         import httpx
         async with httpx.AsyncClient() as http:
             resp = await http.post(
@@ -255,20 +267,32 @@ async def _launch_browser(pw, websocket):
                 json={"projectId": browserbase_project_id},
             )
             if resp.status_code not in (200, 201):
-                await websocket.send_json({
-                    "type": "error",
-                    "message": f"Browserbase session creation failed: {resp.status_code} {resp.text}",
-                    "fatal": True,
-                })
-                return None
+                error_msg = f"Browserbase session creation failed: {resp.status_code} {resp.text}"
+                await _log(error_msg)
+                await websocket.send_json({"type": "error", "message": error_msg, "fatal": True})
+                return None, None
             session = resp.json()
             session_id = session["id"]
+            await _log(f"Browserbase session created: {session_id}")
 
-        return await pw.chromium.connect_over_cdp(
-            f"wss://connect.browserbase.com?apiKey={browserbase_api_key}&sessionId={session_id}"
-        )
+        cdp_url = f"wss://connect.browserbase.com?apiKey={browserbase_api_key}&sessionId={session_id}"
+        browser = await pw.chromium.connect_over_cdp(cdp_url)
+        await _log(f"Connected via CDP. Contexts: {len(browser.contexts)}")
+
+        # CDP connections have an existing context with a blank page
+        if browser.contexts and browser.contexts[0].pages:
+            page = browser.contexts[0].pages[0]
+            await _log(f"Using existing page: {page.url}")
+        else:
+            page = await browser.new_page()
+            await _log("Created new page")
+
+        return browser, page
     else:
-        return await pw.chromium.launch(headless=True)
+        await _log("Using local Chromium (no Browserbase keys)")
+        browser = await pw.chromium.launch(headless=True)
+        page = await browser.new_page()
+        return browser, page
 
 
 async def _detect_platform(page, debug_cb):
