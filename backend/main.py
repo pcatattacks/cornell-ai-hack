@@ -95,11 +95,10 @@ async def scan_endpoint(websocket: WebSocket):
             if await dismiss_cookie_banner(page):
                 await websocket.send_json({"type": "prechat_status", "action": "cookie_dismissed"})
 
-            await asyncio.sleep(3)
-
-            # --- Detect widget ---
-            # Try platform-specific detection first (fast, no API cost)
-            platform = await _detect_platform(page, debug_cb)
+            # --- Wait for widget to appear ---
+            # Chat widgets lazy-load, trigger on scroll, mouse movement, or time-on-page.
+            # Simulate real user behavior to trigger them, polling for detection between actions.
+            platform = await _wait_for_widget(page, debug_cb)
             chat_target = None
             use_vision = False
 
@@ -275,9 +274,76 @@ async def _detect_platform(page, debug_cb):
     platform = parse_detection_results(results)
     if platform:
         await debug_cb(f"Platform detected: {platform}")
-    else:
-        await debug_cb("No known platform detected via globals/DOM")
     return platform
+
+
+async def _wait_for_widget(page, debug_cb):
+    """Wait for chat widget to appear, simulating user behavior to trigger lazy-loaded widgets.
+
+    Chat widgets commonly appear:
+    - After a JS load delay (3-10s after page load)
+    - On scroll (scroll-triggered engagement)
+    - On mouse movement (activity-triggered)
+    - After cookie consent is given (already handled before this runs)
+
+    Returns the detected platform string, or None.
+    """
+    # Each attempt: trigger action → wait → check for widget
+    triggers = [
+        ("initial page load", _trigger_wait, 3),
+        ("scroll down (25%)", _trigger_scroll_down_25, 2),
+        ("scroll down (75%)", _trigger_scroll_down_75, 2),
+        ("mouse movement", _trigger_mouse_movement, 2),
+        ("scroll back to top", _trigger_scroll_to_top, 3),
+        ("extended wait", _trigger_wait, 5),
+    ]
+
+    for description, trigger_fn, wait_seconds in triggers:
+        await debug_cb(f"Widget detection: {description}...")
+        await trigger_fn(page)
+        await asyncio.sleep(wait_seconds)
+
+        platform = await _detect_platform(page, debug_cb)
+        if platform:
+            return platform
+
+    await debug_cb("No platform detected after all trigger attempts")
+    return None
+
+
+async def _trigger_wait(page):
+    """No-op trigger — just wait."""
+    pass
+
+
+async def _trigger_scroll_down_25(page):
+    """Scroll to 25% of page height."""
+    await page.evaluate("window.scrollTo({top: document.body.scrollHeight * 0.25, behavior: 'smooth'})")
+
+
+async def _trigger_scroll_down_75(page):
+    """Scroll to 75% of page height."""
+    await page.evaluate("window.scrollTo({top: document.body.scrollHeight * 0.75, behavior: 'smooth'})")
+
+
+async def _trigger_scroll_to_top(page):
+    """Scroll back to top."""
+    await page.evaluate("window.scrollTo({top: 0, behavior: 'smooth'})")
+
+
+async def _trigger_mouse_movement(page):
+    """Simulate mouse movement across the page."""
+    viewport = page.viewport_size or {"width": 1280, "height": 720}
+    w, h = viewport["width"], viewport["height"]
+    # Move mouse in a pattern that mimics real user behavior
+    await page.mouse.move(w * 0.5, h * 0.5)
+    await asyncio.sleep(0.2)
+    await page.mouse.move(w * 0.8, h * 0.3)
+    await asyncio.sleep(0.2)
+    await page.mouse.move(w * 0.2, h * 0.7)
+    await asyncio.sleep(0.2)
+    # Simulate exit intent — move toward top of viewport
+    await page.mouse.move(w * 0.5, 5)
 
 
 def _empty_report(url):
