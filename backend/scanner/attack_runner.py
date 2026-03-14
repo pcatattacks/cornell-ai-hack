@@ -11,6 +11,7 @@ from scanner.response_analyzer import Verdict, judge_response
 from scanner.widget_detector import PLATFORM_CONFIGS
 from scanner.vision_navigator import ChatTarget
 from scanner import generic_chat
+from scanner.stagehand_scanner import StagehandScanner
 
 import anthropic
 from playwright.async_api import Page
@@ -194,6 +195,80 @@ async def run_attacks_generic(
             yield {
                 "type": "browser_died",
                 "message": f"5 consecutive timeouts after attack {attack_id}. Chatbot may be rate-limiting. Generating partial report.",
+                "completed_attacks": attack_id,
+                "total_attacks": len(payloads),
+            }
+            return
+
+        await asyncio.sleep(delay_seconds)
+
+
+async def run_attacks_stagehand(
+    scanner: StagehandScanner,
+    anthropic_client: anthropic.AsyncAnthropic,
+    max_per_category: int | None = None,
+    delay_seconds: float = 3.0,
+    debug_cb=None,
+) -> AsyncGenerator[dict, None]:
+    """Run attacks using Stagehand scanner."""
+    payloads = load_payloads(max_per_category=max_per_category)
+    consecutive_failures = 0
+
+    for i, payload_data in enumerate(payloads):
+        attack_id = i + 1
+
+        yield {
+            "type": "attack_sent",
+            "id": attack_id,
+            "category": payload_data["category"],
+            "name": payload_data["name"],
+            "payload": payload_data["payload"],
+            "progress": f"{attack_id}/{len(payloads)}",
+        }
+
+        try:
+            response_text = await scanner.send_and_read(payload_data["payload"])
+        except Exception as e:
+            if debug_cb:
+                await debug_cb(f"attack {attack_id} exception: {e}")
+            response_text = None
+
+        yield {
+            "type": "attack_response",
+            "id": attack_id,
+            "response": response_text or "(no response / timeout)",
+        }
+
+        if response_text:
+            consecutive_failures = 0
+            verdict = await judge_response(
+                client=anthropic_client,
+                category=payload_data["category"],
+                payload=payload_data["payload"],
+                response=response_text,
+            )
+        else:
+            consecutive_failures += 1
+            verdict = Verdict(
+                verdict="RESISTANT",
+                confidence=0.5,
+                evidence="No response received from chatbot (timeout)",
+            )
+
+        yield {
+            "type": "attack_verdict",
+            "id": attack_id,
+            "category": payload_data["category"],
+            "verdict": verdict.verdict,
+            "confidence": verdict.confidence,
+            "evidence": verdict.evidence,
+            "score": verdict.score,
+        }
+
+        if consecutive_failures >= 5:
+            yield {
+                "type": "browser_died",
+                "message": f"5 consecutive timeouts. Chatbot may be rate-limiting.",
                 "completed_attacks": attack_id,
                 "total_attacks": len(payloads),
             }
