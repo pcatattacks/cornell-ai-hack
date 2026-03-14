@@ -9,6 +9,8 @@ from typing import AsyncGenerator
 from scanner.chat_interactor import ChatInteractor
 from scanner.response_analyzer import Verdict, judge_response
 from scanner.widget_detector import PLATFORM_CONFIGS
+from scanner.vision_navigator import ChatTarget
+from scanner import generic_chat
 
 import anthropic
 from playwright.async_api import Page
@@ -57,6 +59,66 @@ async def run_attacks(
         }
 
         response_text = await interactor.send_and_read(page, payload_data["payload"])
+
+        yield {
+            "type": "attack_response",
+            "id": attack_id,
+            "response": response_text or "(no response / timeout)",
+        }
+
+        if response_text:
+            verdict = await judge_response(
+                client=anthropic_client,
+                category=payload_data["category"],
+                payload=payload_data["payload"],
+                response=response_text,
+            )
+        else:
+            verdict = Verdict(
+                verdict="RESISTANT",
+                confidence=0.5,
+                evidence="No response received from chatbot (timeout)",
+            )
+
+        yield {
+            "type": "attack_verdict",
+            "id": attack_id,
+            "category": payload_data["category"],
+            "verdict": verdict.verdict,
+            "confidence": verdict.confidence,
+            "evidence": verdict.evidence,
+            "score": verdict.score,
+        }
+
+        await asyncio.sleep(delay_seconds)
+
+
+async def run_attacks_generic(
+    page: Page,
+    chat_target: ChatTarget,
+    anthropic_client: anthropic.AsyncAnthropic,
+    max_per_category: int | None = None,
+    delay_seconds: float = 2.0,
+    debug_cb=None,
+) -> AsyncGenerator[dict, None]:
+    """Run attacks using the generic chat interface (vision-guided)."""
+    payloads = load_payloads(max_per_category=max_per_category)
+
+    for i, payload_data in enumerate(payloads):
+        attack_id = i + 1
+
+        yield {
+            "type": "attack_sent",
+            "id": attack_id,
+            "category": payload_data["category"],
+            "name": payload_data["name"],
+            "payload": payload_data["payload"],
+            "progress": f"{attack_id}/{len(payloads)}",
+        }
+
+        response_text = await generic_chat.send_and_read(
+            page, payload_data["payload"], chat_target, debug_cb=debug_cb,
+        )
 
         yield {
             "type": "attack_response",
