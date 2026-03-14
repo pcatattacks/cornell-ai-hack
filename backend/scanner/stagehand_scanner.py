@@ -159,9 +159,15 @@ class StagehandScanner:
     async def send_message(self, message: str) -> bool:
         """Type a message into the chat input and send it."""
         try:
-            # Use act with the exact message to type
+            # Step 1: Type the message into the chat input
             await self.session.act(
-                input=f'Type the following text into the chat message input field and press Enter to send it: "{message}"',
+                input=f'Type the following text into the chat message input field: "{message}"',
+            )
+            await self._log("Message typed")
+
+            # Step 2: Send it by pressing Enter or clicking the send button
+            await self.session.act(
+                input="Press the Enter key to send the message, or click the Send button if there is one next to the chat input.",
             )
             await self._log("Message sent")
             return True
@@ -171,38 +177,42 @@ class StagehandScanner:
 
     async def read_response(self, sent_message: str) -> Optional[str]:
         """Read the chatbot's response after sending a message."""
-        await asyncio.sleep(3)  # Wait for response to render
+        await asyncio.sleep(5)  # Wait for response to render
 
         for attempt in range(3):
             try:
                 extract_resp = await self.session.extract(
-                    instruction=f"Extract the chatbot's most recent response message. "
-                    f"I just sent: '{sent_message[:80]}'. "
-                    f"Read the bot's reply, NOT my own message. "
-                    f"The bot's response is typically in a different color or alignment from user messages. "
-                    f"If the bot hasn't responded yet, return empty string.",
+                    instruction="Extract the most recent message from the chatbot or AI assistant in the chat widget. "
+                    "Look for the last message that is NOT from the user. "
+                    "Return the full text of that message.",
                     schema={
                         "type": "object",
                         "properties": {
                             "response_text": {
                                 "type": "string",
-                                "description": "The chatbot's most recent response text, or empty string if no response",
+                                "description": "The chatbot's most recent response message text",
+                            },
+                            "found": {
+                                "type": "boolean",
+                                "description": "Whether a chatbot response was found",
                             },
                         },
-                        "required": ["response_text"],
+                        "required": ["response_text", "found"],
                     },
                 )
                 result = extract_resp.data.result
+                await self._log(f"Extract result (attempt {attempt + 1}): {result}")
+
                 if isinstance(result, dict):
-                    text = result.get("response_text", "")
-                    if text and text.strip():
+                    if result.get("found") and result.get("response_text", "").strip():
+                        text = result["response_text"].strip()
                         await self._log(f"Response: {text[:60]}...")
-                        return text.strip()
+                        return text
             except Exception as e:
-                await self._log(f"Extract attempt {attempt + 1} failed: {e}")
+                await self._log(f"Extract attempt {attempt + 1} failed: {type(e).__name__}: {e}")
 
             if attempt < 2:
-                await asyncio.sleep(3)
+                await asyncio.sleep(5)
 
         await self._log("No response received")
         return None
