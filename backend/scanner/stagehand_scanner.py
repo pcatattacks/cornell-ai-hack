@@ -22,6 +22,7 @@ class StagehandScanner:
         self.client: Optional[AsyncStagehand] = None
         self.session = None
         self.session_id: Optional[str] = None
+        self._seen_responses: set[str] = set()  # track all responses to detect stale reads
 
     async def _log(self, msg: str):
         print(f"[stagehand] {msg}")
@@ -289,6 +290,11 @@ class StagehandScanner:
                 if isinstance(result, dict):
                     if result.get("response_found") and result.get("chatbot_response", "").strip():
                         text = result["chatbot_response"].strip()
+                        # Check if this is a stale/previously seen response
+                        if text in self._seen_responses:
+                            await self._log(f"Stale response detected (seen before): {text[:40]}...")
+                            continue  # Try again — might get the real new response
+                        self._seen_responses.add(text)
                         await self._log(f"Response: {text[:60]}...")
                         return text
             except Exception as e:
