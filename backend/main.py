@@ -124,7 +124,7 @@ async def scan_endpoint(websocket: WebSocket):
                     "confidence": event["confidence"],
                     "evidence": event["evidence"],
                 })
-            if event["type"] == "browser_died":
+            if event["type"] in ("browser_died", "rate_limited"):
                 scan_aborted = True
 
         # --- Score + Report ---

@@ -213,6 +213,15 @@ async def run_attacks_stagehand(
     """Run attacks using Stagehand scanner."""
     payloads = load_payloads(max_per_category=max_per_category)
     consecutive_failures = 0
+    last_response = None
+    repeated_response_count = 0
+
+    # Common rate limit / error phrases
+    RATE_LIMIT_PHRASES = [
+        "too many messages", "rate limit", "too many requests",
+        "try again later", "slow down", "max messages",
+        "limit reached", "quota exceeded",
+    ]
 
     for i, payload_data in enumerate(payloads):
         attack_id = i + 1
@@ -233,13 +242,47 @@ async def run_attacks_stagehand(
                 await debug_cb(f"attack {attack_id} exception: {e}")
             response_text = None
 
+        # Check for rate limiting in the response
+        is_rate_limited = False
+        if response_text:
+            response_lower = response_text.lower()
+            for phrase in RATE_LIMIT_PHRASES:
+                if phrase in response_lower:
+                    is_rate_limited = True
+                    break
+
+            # Check for repeated identical responses (sign of stale/cached reads)
+            if response_text == last_response:
+                repeated_response_count += 1
+            else:
+                repeated_response_count = 0
+            last_response = response_text
+
         yield {
             "type": "attack_response",
             "id": attack_id,
             "response": response_text or "(no response / timeout)",
         }
 
-        if response_text:
+        if is_rate_limited:
+            yield {
+                "type": "attack_verdict",
+                "id": attack_id,
+                "category": payload_data["category"],
+                "verdict": "RESISTANT",
+                "confidence": 0.3,
+                "evidence": f"Chatbot returned a rate-limit message: {response_text[:80]}",
+                "score": 0.0,
+            }
+            yield {
+                "type": "rate_limited",
+                "message": f"Chatbot is rate-limiting after {attack_id} messages. Stopping scan and generating report from completed attacks.",
+                "completed_attacks": attack_id,
+                "total_attacks": len(payloads),
+            }
+            return
+
+        if response_text and not is_rate_limited:
             consecutive_failures = 0
             verdict = await judge_response(
                 client=anthropic_client,
@@ -255,20 +298,34 @@ async def run_attacks_stagehand(
                 evidence="No response received from chatbot (timeout)",
             )
 
-        yield {
-            "type": "attack_verdict",
-            "id": attack_id,
-            "category": payload_data["category"],
-            "verdict": verdict.verdict,
-            "confidence": verdict.confidence,
-            "evidence": verdict.evidence,
-            "score": verdict.score,
-        }
+        if not is_rate_limited:
+            yield {
+                "type": "attack_verdict",
+                "id": attack_id,
+                "category": payload_data["category"],
+                "verdict": verdict.verdict,
+                "confidence": verdict.confidence,
+                "evidence": verdict.evidence,
+                "score": verdict.score,
+            }
 
+        # Stop on consecutive failures (timeouts)
         if consecutive_failures >= 5:
             yield {
-                "type": "browser_died",
-                "message": f"5 consecutive timeouts. Chatbot may be rate-limiting.",
+                "type": "rate_limited",
+                "message": f"5 consecutive timeouts after {attack_id} messages. Chatbot may be rate-limiting or unresponsive.",
+                "completed_attacks": attack_id,
+                "total_attacks": len(payloads),
+            }
+            return
+
+        # Stop if same response repeated 3+ times (reading stale responses)
+        if repeated_response_count >= 3:
+            if debug_cb:
+                await debug_cb(f"Same response repeated {repeated_response_count} times — likely rate-limited")
+            yield {
+                "type": "rate_limited",
+                "message": f"Chatbot returning identical responses after {attack_id} messages. Likely rate-limited.",
                 "completed_attacks": attack_id,
                 "total_attacks": len(payloads),
             }

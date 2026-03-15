@@ -85,6 +85,18 @@ function EventRow({ event }: { event: WSEvent }) {
         </div>
       );
     }
+    case "rate_limited":
+      return (
+        <div className="mt-3 px-3 py-2 bg-yellow-50 border border-yellow-200 rounded text-yellow-800 text-sm">
+          &#9888; {String(event.message)}
+        </div>
+      );
+    case "browser_died":
+      return (
+        <div className="mt-3 px-3 py-2 bg-yellow-50 border border-yellow-200 rounded text-yellow-800 text-sm">
+          &#9888; {String(event.message)}
+        </div>
+      );
     case "debug":
       return <div className="text-gray-400 text-xs ml-4 font-mono">[debug] {String(event.message)}</div>;
     case "error":

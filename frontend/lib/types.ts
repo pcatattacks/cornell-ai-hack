@@ -8,6 +8,7 @@ export type WSEventType =
   | "attack_verdict"
   | "scan_complete"
   | "browser_died"
+  | "rate_limited"
   | "debug"
   | "error";
 
