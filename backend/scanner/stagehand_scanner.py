@@ -185,11 +185,25 @@ class StagehandScanner:
         return False
 
     async def _dismiss_blockers(self):
-        """Dismiss anything blocking the chat: menus, email forms, overlays.
+        """Dismiss anything blocking the chat: modals, email forms, menus.
 
-        Each action is independent — if one fails, try the next.
+        Tries strategies in order of preference:
+        1. Skip/close/dismiss any modal or overlay
+        2. Click a menu option to start conversation
+        3. Fill and submit email form as last resort
         """
-        # Try clicking a conversation-starting menu option
+        # Strategy 1: Skip, Close, or Dismiss any modal/overlay/popup
+        try:
+            await self.session.act(
+                input="click the Skip, Close, Dismiss, No thanks, or X button on any popup, modal, or overlay in the chat widget",
+            )
+            await self._log("Dismissed blocker via Skip/Close")
+            await asyncio.sleep(2)
+            return
+        except Exception:
+            pass
+
+        # Strategy 2: Click a conversation-starting menu option
         try:
             await self.session.act(
                 input="click the button or link to start a new chat conversation with the AI chatbot",
@@ -200,14 +214,14 @@ class StagehandScanner:
         except Exception:
             pass
 
-        # Try filling and submitting an email/name form
+        # Strategy 3: Fill and submit email form
         try:
             await self.session.act(
                 input="type 'test@scanner.local' into the email input field",
             )
             await asyncio.sleep(0.5)
         except Exception:
-            return  # No email field — nothing more to dismiss
+            return
 
         try:
             await self.session.act(input="check any consent or privacy checkboxes")
@@ -246,19 +260,24 @@ class StagehandScanner:
             try:
                 extract_resp = await self.session.extract(
                     instruction=(
-                        "extract the text of the most recent chatbot response message "
-                        "in the chat widget. Return the bot's reply, not the user's message."
+                        "In the chat widget, find the most recent message from the CHATBOT or AI ASSISTANT. "
+                        "Chat widgets show two types of messages: USER messages (sent by the visitor, "
+                        "usually on the right side or in a colored bubble) and BOT messages (from the "
+                        "chatbot/assistant, usually on the left side or in a different colored bubble). "
+                        f"The user just sent: '{sent_message[:50]}'. "
+                        "Do NOT extract this user message. Extract only the BOT's reply. "
+                        "If the bot has not replied yet, set response_found to false."
                     ),
                     schema={
                         "type": "object",
                         "properties": {
                             "chatbot_response": {
                                 "type": "string",
-                                "description": "The full text of the chatbot's most recent reply",
+                                "description": "The full text of the chatbot/AI assistant's most recent reply message, NOT the user's message",
                             },
                             "response_found": {
                                 "type": "boolean",
-                                "description": "True if a chatbot response was found",
+                                "description": "True only if a chatbot/bot response was found that is different from the user's sent message",
                             },
                         },
                         "required": ["chatbot_response", "response_found"],
