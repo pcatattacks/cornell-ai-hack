@@ -64,7 +64,7 @@ def summarize(results_path: str = "output/results.json") -> None:
             elif not judge_pass and pf_pass:
                 false_positives += 1
             disagreements.append({
-                "prompt": result.get("prompt", result.get("vars", {}).get("prompt", ""))[:80],
+                "prompt": str(result.get("prompt", result.get("vars", {}).get("prompt", "")))[:80],
                 "judge": judge_verdict,
                 "promptfoo": "PASS" if pf_pass else "FAIL",
                 "category": category,
