@@ -1,0 +1,12 @@
+{
+  "name": "judge-eval",
+  "private": true,
+  "scripts": {
+    "generate": "promptfoo redteam generate",
+    "eval": "promptfoo redteam eval --output output/results.json",
+    "summary": "python summarize.py"
+  },
+  "dependencies": {
+    "promptfoo": "latest"
+  }
+}
