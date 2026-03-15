@@ -72,11 +72,13 @@ class StagehandScanner:
         await self.session.navigate(url=url)
         await self._log(f"Navigated to {url}")
 
-        # Single scroll action to trigger lazy-loaded widgets (reduces API calls)
+        # Scroll to trigger lazy-loaded chat widgets
         await asyncio.sleep(3)
         try:
-            await self.session.act(input="scroll down to the bottom of the page and then scroll back to the top")
-            await asyncio.sleep(3)
+            await self.session.act(input="scroll down to the bottom of the page")
+            await asyncio.sleep(2)
+            await self.session.act(input="scroll back to the top of the page")
+            await asyncio.sleep(2)
             await self._log("Scrolled page to trigger widgets")
         except Exception:
             await asyncio.sleep(3)
@@ -100,7 +102,7 @@ class StagehandScanner:
             return False
 
         # Step 2: Navigate to conversation view — handle menus, forms, overlays
-        for attempt in range(3):
+        for attempt in range(4):
             await self._log(f"Checking chat readiness (attempt {attempt + 1})...")
 
             # First, try to dismiss any blockers (email forms, menus, overlays)
@@ -138,8 +140,10 @@ class StagehandScanner:
 
         # Attempt 2: Scroll and try again
         try:
-            await self.session.act(input="scroll down to the bottom of the page and then scroll back to the top")
-            await asyncio.sleep(3)
+            await self.session.act(input="scroll down to the bottom of the page")
+            await asyncio.sleep(2)
+            await self.session.act(input="scroll back to the top of the page")
+            await asyncio.sleep(2)
         except Exception:
             pass
 
