@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bella's Bistro</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #fdf6e3;
+            color: #333;
+        }
+        .hero {
+            text-align: center;
+            padding: 60px 20px 40px;
+            background: linear-gradient(135deg, #8b0000, #c41e3a);
+            color: white;
+        }
+        .hero h1 { font-size: 2.5rem; margin-bottom: 8px; }
+        .hero p { font-size: 1.1rem; opacity: 0.9; }
+        .content {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+        .menu-section h2 {
+            font-size: 1.5rem;
+            color: #8b0000;
+            margin-bottom: 16px;
+        }
+        .menu-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px dashed #ddd;
+        }
+        .info {
+            margin-top: 30px;
+            color: #666;
+            font-size: 0.95rem;
+        }
+        /* Chat widget */
+        #demo-chat-widget {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 380px;
+            height: 500px;
+            border-radius: 12px;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.15);
+            display: flex;
+            flex-direction: column;
+            background: white;
+            overflow: hidden;
+            z-index: 1000;
+        }
+        .chat-header {
+            background: #8b0000;
+            color: white;
+            padding: 14px 16px;
+            font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .chat-header .status {
+            font-size: 0.75rem;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-weight: 400;
+        }
+        .status-vulnerable { background: rgba(255,255,255,0.2); }
+        .status-hardened { background: #22c55e; }
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .msg {
+            max-width: 85%;
+            padding: 10px 14px;
+            border-radius: 12px;
+            font-size: 0.9rem;
+            line-height: 1.4;
+            white-space: pre-wrap;
+        }
+        .msg-user {
+            align-self: flex-end;
+            background: #8b0000;
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+        .msg-bot {
+            align-self: flex-start;
+            background: #f0f0f0;
+            color: #333;
+            border-bottom-left-radius: 4px;
+        }
+        .chat-input-area {
+            display: flex;
+            border-top: 1px solid #eee;
+            padding: 10px;
+            gap: 8px;
+        }
+        .chat-input-area textarea {
+            flex: 1;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 0.9rem;
+            resize: none;
+            font-family: inherit;
+            outline: none;
+        }
+        .chat-input-area textarea:focus { border-color: #8b0000; }
+        .chat-input-area button {
+            background: #8b0000;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 8px 16px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        .chat-input-area button:hover { background: #a00; }
+        .chat-input-area button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .typing { color: #999; font-style: italic; font-size: 0.85rem; }
+    </style>
+</head>
+<body>
+    <script>window.__DEMO_CHATBOT__ = true;</script>
+
+    <div class="hero">
+        <h1>Bella's Bistro</h1>
+        <p>Authentic Italian cuisine in the heart of Ithaca, NY</p>
+    </div>
+
+    <div class="content">
+        <div class="menu-section">
+            <h2>Our Menu</h2>
+            <div class="menu-item"><span>Margherita Pizza</span><span>$14</span></div>
+            <div class="menu-item"><span>Truffle Pasta</span><span>$22</span></div>
+            <div class="menu-item"><span>Bruschetta</span><span>$9</span></div>
+            <div class="menu-item"><span>Caesar Salad</span><span>$11</span></div>
+            <div class="menu-item"><span>Tiramisu</span><span>$10</span></div>
+            <div class="menu-item"><span>Espresso</span><span>$4</span></div>
+        </div>
+        <div class="info">
+            <p>Tue-Sun 11am-10pm | Closed Mondays</p>
+            <p>123 Aurora St, Ithaca, NY 14850</p>
+        </div>
+    </div>
+
+    <div id="demo-chat-widget">
+        <div class="chat-header">
+            <span>Bella's Bistro Support</span>
+            <span class="status status-vulnerable" id="chat-status">Active</span>
+        </div>
+        <div class="chat-messages" id="chat-messages">
+            <div class="msg msg-bot" data-role="assistant">
+                Ciao! Welcome to Bella's Bistro! How can I help you today?
+            </div>
+        </div>
+        <div class="chat-input-area">
+            <textarea id="chat-input" placeholder="Type a message..." rows="1"></textarea>
+            <button id="chat-send">Send</button>
+        </div>
+    </div>
+
+    <script>
+        const messagesEl = document.getElementById('chat-messages');
+        const inputEl = document.getElementById('chat-input');
+        const sendBtn = document.getElementById('chat-send');
+        const statusEl = document.getElementById('chat-status');
+        let history = [];
+        let sending = false;
+
+        function addMessage(text, role) {
+            const div = document.createElement('div');
+            div.className = 'msg ' + (role === 'user' ? 'msg-user' : 'msg-bot');
+            if (role === 'assistant') div.setAttribute('data-role', 'assistant');
+            div.textContent = text;
+            messagesEl.appendChild(div);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+
+        function showTyping() {
+            const div = document.createElement('div');
+            div.className = 'typing';
+            div.id = 'typing-indicator';
+            div.textContent = 'Bella is typing...';
+            messagesEl.appendChild(div);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+
+        function hideTyping() {
+            const el = document.getElementById('typing-indicator');
+            if (el) el.remove();
+        }
+
+        async function sendMessage() {
+            const text = inputEl.value.trim();
+            if (!text || sending) return;
+
+            sending = true;
+            sendBtn.disabled = true;
+            inputEl.value = '';
+            addMessage(text, 'user');
+            showTyping();
+
+            try {
+                const res = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: text, history: history }),
+                });
+                const data = await res.json();
+                hideTyping();
+                addMessage(data.response, 'assistant');
+                history.push({ role: 'user', content: text });
+                history.push({ role: 'assistant', content: data.response });
+            } catch (e) {
+                hideTyping();
+                addMessage('Sorry, something went wrong. Please try again.', 'assistant');
+            }
+
+            sending = false;
+            sendBtn.disabled = false;
+            inputEl.focus();
+        }
+
+        sendBtn.addEventListener('click', sendMessage);
+        inputEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        // Check hardened status on load and poll periodically
+        function checkStatus() {
+            fetch('/status').then(r => r.json()).then(data => {
+                if (data.hardened) {
+                    statusEl.textContent = 'Hardened';
+                    statusEl.className = 'status status-hardened';
+                } else {
+                    statusEl.textContent = 'Active';
+                    statusEl.className = 'status status-vulnerable';
+                }
+            }).catch(() => {});
+        }
+        checkStatus();
+        setInterval(checkStatus, 5000);
+    </script>
+</body>
+</html>
