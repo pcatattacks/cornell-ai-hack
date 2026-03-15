@@ -41,7 +41,7 @@ class StagehandScanner:
             model_api_key=os.getenv("ANTHROPIC_API_KEY"),
         )
         self.session = await self.client.sessions.start(
-            model_name="anthropic/claude-sonnet-4-20250514",
+            model_name="anthropic/claude-haiku-4-5-20251001",
             self_heal=True,
             wait_for_captcha_solves=True,
             dom_settle_timeout_ms=5000,
