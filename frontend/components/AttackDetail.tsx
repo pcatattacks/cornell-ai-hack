@@ -28,6 +28,10 @@ interface AttackDetailProps {
     verdict: string;
     confidence: number;
     evidence: string;
+    description?: string;
+    technique?: string;
+    source?: string;
+    reference_url?: string;
   };
 }
 
@@ -87,9 +91,25 @@ export function AttackDetail({ finding }: AttackDetailProps) {
             <p className="text-sm text-gray-600">{finding.evidence}</p>
           </div>
 
-          {/* Confidence */}
-          <div className="flex items-center gap-4 text-xs text-gray-400">
+          {/* Footer: confidence + source */}
+          <div className="flex items-center justify-between text-xs text-gray-400 pt-2 border-t border-gray-100">
             <span>Confidence: {(finding.confidence * 100).toFixed(0)}%</span>
+            {finding.source && (
+              <span className="flex items-center gap-1">
+                {finding.reference_url ? (
+                  <a
+                    href={finding.reference_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-500 hover:text-blue-700 hover:underline"
+                  >
+                    &#128279; {finding.source}
+                  </a>
+                ) : (
+                  <span>{finding.source}</span>
+                )}
+              </span>
+            )}
           </div>
         </div>
       )}

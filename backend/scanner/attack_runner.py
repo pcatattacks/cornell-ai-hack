@@ -231,7 +231,11 @@ async def run_attacks_stagehand(
             "id": attack_id,
             "category": payload_data["category"],
             "name": payload_data["name"],
+            "description": payload_data.get("description", ""),
             "payload": payload_data["payload"],
+            "technique": payload_data.get("technique", ""),
+            "source": payload_data.get("source", ""),
+            "reference_url": payload_data.get("reference_url", ""),
             "progress": f"{attack_id}/{len(payloads)}",
         }
 

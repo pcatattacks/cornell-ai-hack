@@ -123,7 +123,11 @@ async def scan_endpoint(websocket: WebSocket):
             if event["type"] == "attack_sent":
                 pending_attacks[event["id"]] = {
                     "name": event.get("name", ""),
+                    "description": event.get("description", ""),
                     "payload": event.get("payload", ""),
+                    "technique": event.get("technique", ""),
+                    "source": event.get("source", ""),
+                    "reference_url": event.get("reference_url", ""),
                 }
             elif event["type"] == "attack_response":
                 if event["id"] in pending_attacks:
@@ -134,8 +138,12 @@ async def scan_endpoint(websocket: WebSocket):
                     "id": event["id"],
                     "category": event["category"],
                     "name": attack_info.get("name", ""),
+                    "description": attack_info.get("description", ""),
                     "payload": attack_info.get("payload", ""),
                     "response": attack_info.get("response", ""),
+                    "technique": attack_info.get("technique", ""),
+                    "source": attack_info.get("source", ""),
+                    "reference_url": attack_info.get("reference_url", ""),
                     "score": event["score"],
                     "verdict": event["verdict"],
                     "confidence": event["confidence"],

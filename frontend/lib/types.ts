@@ -38,8 +38,12 @@ export interface ScanReport {
     id: number;
     category: string;
     name: string;
+    description: string;
     payload: string;
     response: string;
+    technique: string;
+    source: string;
+    reference_url: string;
     score: number;
     verdict: string;
     confidence: number;

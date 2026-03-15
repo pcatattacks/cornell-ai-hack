@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { WSEvent } from "@/lib/types";
 
 const VERDICT_STYLES: Record<string, string> = {
@@ -14,10 +14,60 @@ const CATEGORY_LABELS: Record<string, string> = {
   goal_hijacking: "Goal Hijacking",
   data_leakage: "Data Leakage",
   guardrail_bypass: "Guardrail Bypass",
+  insecure_output_handling: "Insecure Output Handling",
+  indirect_prompt_injection: "Indirect Prompt Injection",
 };
+
+function formatTime(seconds: number): string {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
+}
 
 export function ScanProgress({ events }: { events: WSEvent[] }) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const startTimeRef = useRef<number | null>(null);
+
+  // Derive scan state from events
+  const isComplete = events.some((e) => e.type === "scan_complete" || e.type === "error");
+  const attackCount = events.filter((e) => e.type === "attack_verdict").length;
+  const totalAttacks = (() => {
+    const lastSent = [...events].reverse().find((e) => e.type === "attack_sent");
+    if (lastSent) {
+      const progress = String(lastSent.progress || "");
+      const match = progress.match(/\d+\/(\d+)/);
+      if (match) return parseInt(match[1]);
+    }
+    return null;
+  })();
+
+  useEffect(() => {
+    // Start timer on first event
+    if (events.length > 0 && !startTimeRef.current) {
+      startTimeRef.current = Date.now();
+    }
+
+    if (startTimeRef.current && !isComplete) {
+      timerRef.current = setInterval(() => {
+        setElapsed(Math.floor((Date.now() - startTimeRef.current!) / 1000));
+      }, 1000);
+    }
+
+    if (isComplete && timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+      // Set final elapsed time
+      if (startTimeRef.current) {
+        setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));
+      }
+    }
+
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [events, isComplete]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -25,7 +75,21 @@ export function ScanProgress({ events }: { events: WSEvent[] }) {
 
   return (
     <div className="w-full max-w-2xl mx-auto">
-      <h2 className="text-xl font-semibold text-gray-900 mb-4">Scan Progress</h2>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-xl font-semibold text-gray-900">Scan Progress</h2>
+        <div className="flex items-center gap-2 text-sm text-gray-500 font-mono">
+          <span>&#9201;</span>
+          <span>{formatTime(elapsed)}</span>
+          {attackCount > 0 && (
+            <>
+              <span className="text-gray-300">·</span>
+              <span>
+                {attackCount}{totalAttacks ? `/${totalAttacks}` : ""} attacks
+              </span>
+            </>
+          )}
+        </div>
+      </div>
       <div className="space-y-2 font-mono text-sm max-h-[600px] overflow-y-auto">
         {events.map((event, i) => (
           <EventRow key={i} event={event} />
@@ -65,23 +129,18 @@ function EventRow({ event }: { event: WSEvent }) {
       return (
         <div className="text-gray-500 mt-3">
           <span className="text-gray-400">[{String(event.progress)}]</span>{" "}
-          <span className="text-gray-400">{CATEGORY_LABELS[String(event.category)] || String(event.category)}</span>
-          <div className="ml-4 text-gray-700 mt-1">
-            Payload: &quot;{truncate(String(event.payload), 80)}&quot;
-          </div>
+          <span className="font-medium text-gray-700">{String(event.name)}</span>
+          <span className="text-gray-300 mx-1">·</span>
+          <span className="text-gray-400 text-xs">{CATEGORY_LABELS[String(event.category)] || String(event.category)}</span>
         </div>
       );
     case "attack_response":
-      return (
-        <div className="ml-4 text-gray-500">
-          Response: &quot;{truncate(String(event.response), 100)}&quot;
-        </div>
-      );
+      return null; // Don't show raw response in progress — it's shown in the report
     case "attack_verdict": {
       const verdict = String(event.verdict);
       return (
         <div className={`ml-4 px-2 py-1 rounded ${VERDICT_STYLES[verdict] || ""}`}>
-          {verdict === "VULNERABLE" ? "\u{1F534}" : verdict === "PARTIAL" ? "\u{1F7E1}" : "\u{1F7E2}"} {verdict} — {String(event.evidence)}
+          {verdict === "VULNERABLE" ? "\u{1F534}" : verdict === "PARTIAL" ? "\u{1F7E1}" : "\u{1F7E2}"} {verdict} — {truncate(String(event.evidence), 100)}
         </div>
       );
     }
