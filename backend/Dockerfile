@@ -9,7 +9,7 @@ COPY backend/payloads/ payloads/
 COPY backend/main.py .
 
 # Install dependencies
-RUN pip install --no-cache-dir fastapi "uvicorn[standard]" anthropic websockets python-dotenv httpx stagehand
+RUN pip install --no-cache-dir fastapi "uvicorn[standard]" anthropic websockets python-dotenv httpx stagehand playwright
 
 # Expose port
 EXPOSE 8000
