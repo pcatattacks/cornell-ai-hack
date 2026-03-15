@@ -21,9 +21,9 @@ export function ScanInput({ onStartScan, disabled }: ScanInputProps) {
   return (
     <div className="w-full max-w-2xl mx-auto">
       <div className="text-center mb-8">
-        <h1 className="text-4xl font-bold text-gray-900 mb-2">AI Chatbot Vulnerability Scanner</h1>
+        <h1 className="text-4xl font-bold text-gray-900 mb-2">AgentProbe</h1>
         <p className="text-lg text-gray-600">
-          Test your AI chatbot for prompt injection vulnerabilities — the way a real attacker would.
+          Scan any AI chatbot for prompt injection vulnerabilities — the way a real attacker would.
         </p>
       </div>
 

@@ -197,7 +197,7 @@ async def scan_endpoint(websocket: WebSocket):
         await websocket.send_json({"type": "scan_complete", "report": report})
 
     except WebSocketDisconnect:
-        print("[scan] WebSocket disconnected")
+        print("[scan] WebSocket disconnected — will clean up session")
     except Exception as e:
         print(f"[scan] ERROR: {type(e).__name__}: {e}")
         import traceback
