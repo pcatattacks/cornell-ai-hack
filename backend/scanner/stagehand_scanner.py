@@ -41,6 +41,17 @@ class StagehandScanner:
         )
         self.session = await self.client.sessions.start(
             model_name="anthropic/claude-sonnet-4-20250514",
+            self_heal=True,
+            wait_for_captcha_solves=True,
+            dom_settle_timeout_ms=5000,
+            browserbase_session_create_params={
+                "browser_settings": {
+                    "solve_captchas": True,
+                    "block_ads": True,
+                    "record_session": True,
+                    "viewport": {"width": 1280, "height": 720},
+                },
+            },
         )
         self.session_id = self.session.id
         await self._log(f"Session started: {self.session_id}")
