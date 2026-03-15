@@ -1,8 +1,9 @@
 {
   "enabledPlugins": {
-    "solopreneur@solopreneur": true,
+    "solopreneur@solopreneur": false,
     "feature-dev@claude-plugins-official": true,
     "skill-creator@claude-plugins-official": true,
-    "superpowers@claude-plugins-official": true
+    "superpowers@claude-plugins-official": true,
+    "context7@claude-plugins-official": true
   }
 }
