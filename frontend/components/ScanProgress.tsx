@@ -35,7 +35,7 @@ export function ScanProgress({ events }: { events: WSEvent[] }) {
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const startTimeRef = useRef<number | null>(null);
-  const [showDebug, setShowDebug] = useState(false);
+  const [showDebug, setShowDebug] = useState(true);
 
   const isComplete = events.some((e) => e.type === "scan_complete" || e.type === "error");
   const attackCount = events.filter((e) => e.type === "attack_verdict").length;
@@ -232,14 +232,14 @@ function BlockRow({ block, showDebug }: { block: Block; showDebug: boolean }) {
         {/* Payload */}
         <div className="px-3 py-2 border-t border-gray-100">
           <span className="text-gray-400 text-xs">&#8594; </span>
-          <span className="text-gray-600 text-sm font-mono">{truncate(String(sent.payload), 120)}</span>
+          <span className="text-gray-600 text-sm font-mono whitespace-pre-wrap break-words">{String(sent.payload)}</span>
         </div>
 
         {/* Response */}
         {response && String(response.response) !== "(no response / timeout)" && (
           <div className="px-3 py-2 border-t border-gray-100 bg-blue-50/30">
             <span className="text-blue-400 text-xs">&#8592; </span>
-            <span className="text-gray-700 text-sm">{truncate(String(response.response), 150)}</span>
+            <span className="text-gray-700 text-sm whitespace-pre-wrap break-words">{String(response.response)}</span>
           </div>
         )}
 
