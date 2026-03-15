@@ -30,7 +30,7 @@ function formatTime(seconds: number): string {
   return `${mins}:${secs.toString().padStart(2, "0")}`;
 }
 
-export function ScanProgress({ events }: { events: WSEvent[] }) {
+export function ScanProgress({ events, onStop }: { events: WSEvent[]; onStop?: () => void }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -82,6 +82,14 @@ export function ScanProgress({ events }: { events: WSEvent[] }) {
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-semibold text-gray-900">Scan Progress</h2>
         <div className="flex items-center gap-3">
+          {onStop && !isComplete && (
+            <button
+              onClick={onStop}
+              className="text-xs px-3 py-1 bg-red-50 text-red-600 border border-red-200 rounded hover:bg-red-100 transition-colors"
+            >
+              Stop Scan
+            </button>
+          )}
           <button
             onClick={() => setShowDebug(!showDebug)}
             className="text-xs text-gray-400 hover:text-gray-600"

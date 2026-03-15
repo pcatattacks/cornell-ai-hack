@@ -6,13 +6,13 @@ import { VulnerabilityReport } from "@/components/VulnerabilityReport";
 import { useScanWebSocket } from "@/lib/useWebSocket";
 
 export default function Home() {
-  const { events, state, report, error, startScan, reset } = useScanWebSocket();
+  const { events, state, report, error, startScan, stopScan, reset } = useScanWebSocket();
 
   return (
     <main className="min-h-screen bg-white py-12 px-4">
       {state === "idle" && <ScanInput onStartScan={startScan} />}
 
-      {state === "scanning" && <ScanProgress events={events} />}
+      {state === "scanning" && <ScanProgress events={events} onStop={stopScan} />}
 
       {state === "complete" && report && <VulnerabilityReport report={report} onReset={reset} />}
 
