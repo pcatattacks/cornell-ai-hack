@@ -7,6 +7,8 @@ export type WSEventType =
   | "attack_response"
   | "attack_verdict"
   | "scan_complete"
+  | "browser_died"
+  | "debug"
   | "error";
 
 export interface WSEvent {
