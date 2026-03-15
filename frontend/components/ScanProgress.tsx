@@ -132,7 +132,12 @@ function buildBlocks(events: WSEvent[]): Block[] {
         currentAttack = [];
       }
     } else if (event.type === "debug") {
-      blocks.push({ type: "debug", events: [event] });
+      // If we're inside an attack, absorb debug events into it
+      if (currentAttack.length > 0) {
+        currentAttack.push(event);
+      } else {
+        blocks.push({ type: "debug", events: [event] });
+      }
     } else if (event.type === "rate_limited" || event.type === "browser_died") {
       blocks.push({ type: "warning", events: [event] });
     } else {
@@ -200,6 +205,7 @@ function BlockRow({ block, showDebug }: { block: Block; showDebug: boolean }) {
     const sent = block.events.find((e) => e.type === "attack_sent");
     const response = block.events.find((e) => e.type === "attack_response");
     const verdict = block.events.find((e) => e.type === "attack_verdict");
+    const debugEvents = block.events.filter((e) => e.type === "debug");
 
     if (!sent) return null;
 
@@ -208,9 +214,9 @@ function BlockRow({ block, showDebug }: { block: Block; showDebug: boolean }) {
     const verdictIcon = VERDICT_ICONS[verdictStr] || "";
 
     return (
-      <div className="mt-3 rounded-lg border border-gray-100 overflow-hidden">
+      <div className="mt-4 rounded-lg border border-gray-200 overflow-hidden shadow-sm">
         {/* Attack header */}
-        <div className="px-3 py-2 bg-gray-50 flex items-center justify-between">
+        <div className="px-3 py-2 bg-gray-50 flex items-center justify-between border-b border-gray-200">
           <div>
             <span className="text-gray-400 text-xs font-mono">[{String(sent.progress)}]</span>{" "}
             <span className="font-medium text-gray-800">{String(sent.name)}</span>
@@ -228,6 +234,15 @@ function BlockRow({ block, showDebug }: { block: Block; showDebug: boolean }) {
             </a>
           ) : null}
         </div>
+
+        {/* Debug events inside this attack block */}
+        {showDebug && debugEvents.length > 0 && (
+          <div className="px-3 py-1 bg-gray-50/50 border-t border-gray-100">
+            {debugEvents.map((d, di) => (
+              <div key={di} className="text-gray-400 text-xs font-mono">[debug] {String(d.message)}</div>
+            ))}
+          </div>
+        )}
 
         {/* Payload */}
         <div className="px-3 py-2 border-t border-gray-100">
