@@ -123,7 +123,13 @@ export function useScanWebSocket() {
     };
 
     ws.onmessage = (event) => {
-      const data: WSEvent = JSON.parse(event.data);
+      let data: WSEvent;
+      try {
+        data = JSON.parse(event.data);
+      } catch {
+        console.error("Received non-JSON WebSocket message", event.data);
+        return;
+      }
       setEvents((prev) => [...prev, data]);
 
       if (data.type === "scan_complete") {

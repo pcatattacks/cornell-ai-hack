@@ -244,7 +244,7 @@ function BlockRow({ block, showDebug }: { block: Block; showDebug: boolean }) {
           </div>
           {sent.reference_url ? (
             <a
-              href={String(sent.reference_url)}
+              href={/^https?:\/\//.test(String(sent.reference_url)) ? String(sent.reference_url) : "#"}
               target="_blank"
               rel="noopener noreferrer"
               className="text-blue-400 hover:text-blue-600 text-xs"

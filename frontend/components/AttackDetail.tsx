@@ -98,7 +98,7 @@ export function AttackDetail({ finding }: AttackDetailProps) {
               <span className="flex items-center gap-1">
                 {finding.reference_url ? (
                   <a
-                    href={finding.reference_url}
+                    href={/^https?:\/\//.test(finding.reference_url) ? finding.reference_url : "#"}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-blue-500 hover:text-blue-700 hover:underline"

@@ -4,9 +4,11 @@ Uses Stagehand (Browserbase) for browser automation.
 """
 
 import asyncio
+import ipaddress
 import json
 import os
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -26,12 +28,43 @@ load_dotenv()
 
 app = FastAPI(title="AI Chatbot Vulnerability Scanner")
 
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+BLOCKED_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+PRIVATE_RANGES = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("169.254.0.0/16"),
+]
+
+
+def validate_scan_url(url: str) -> str:
+    """Validate and sanitize the scan URL to prevent SSRF."""
+    if not url.startswith("http"):
+        url = f"https://{url}"
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("Only http/https URLs are allowed")
+    host = parsed.hostname or ""
+    if host in BLOCKED_HOSTS:
+        raise ValueError("Scanning internal addresses is not allowed")
+    try:
+        addr = ipaddress.ip_address(host)
+        if any(addr in net for net in PRIVATE_RANGES):
+            raise ValueError("Scanning private IP ranges is not allowed")
+    except ValueError as e:
+        if "not allowed" in str(e):
+            raise
+    return url
 
 REMEDIATION = {
     "system_prompt_extraction": "Avoid storing sensitive information (API keys, internal URLs, business logic) in system prompts. Use instruction hierarchy to prevent prompt echo. Consider a separate retrieval layer for business rules.",
@@ -56,14 +89,18 @@ async def scan_endpoint(websocket: WebSocket):
 
     try:
         data = await websocket.receive_json()
-        print(f"[scan] Received request: {data}")
-        url = data.get("url")
+        url = data.get("url", "").strip()
+        print(f"[scan] Scan requested for: {url[:100]}")
+
         if not url:
             await websocket.send_json({"type": "error", "message": "URL is required", "fatal": True})
             return
 
-        if not url.startswith("http"):
-            url = f"https://{url}"
+        try:
+            url = validate_scan_url(url)
+        except ValueError as e:
+            await websocket.send_json({"type": "error", "message": str(e), "fatal": True})
+            return
 
         await websocket.send_json({
             "type": "scan_start",
@@ -166,7 +203,7 @@ async def scan_endpoint(websocket: WebSocket):
         import traceback
         traceback.print_exc()
         try:
-            await websocket.send_json({"type": "error", "message": str(e), "fatal": True})
+            await websocket.send_json({"type": "error", "message": "An internal error occurred. Please try again.", "fatal": True})
         except Exception:
             pass
     finally:
