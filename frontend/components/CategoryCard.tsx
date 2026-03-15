@@ -3,12 +3,15 @@
 import { useState } from "react";
 import type { CategoryDetail, ScanReport } from "@/lib/types";
 import { GradeBadge } from "./GradeBadge";
+import { AttackDetail } from "./AttackDetail";
 
 const CATEGORY_LABELS: Record<string, string> = {
   system_prompt_extraction: "System Prompt Extraction",
   goal_hijacking: "Goal Hijacking",
   data_leakage: "Data Leakage",
   guardrail_bypass: "Guardrail Bypass",
+  insecure_output_handling: "Insecure Output Handling",
+  indirect_prompt_injection: "Indirect Prompt Injection",
 };
 
 interface CategoryCardProps {
@@ -37,17 +40,9 @@ export function CategoryCard({ category, detail, findings }: CategoryCardProps) 
       </button>
 
       {expanded && (
-        <div className="mt-4 space-y-3">
+        <div className="mt-4 space-y-2">
           {categoryFindings.map((f) => (
-            <div key={f.id} className="border-l-2 pl-3 text-sm border-gray-200">
-              <div className="flex items-center gap-2">
-                <span className={f.verdict === "VULNERABLE" ? "text-red-600 font-semibold" : f.verdict === "PARTIAL" ? "text-yellow-600 font-semibold" : "text-green-600"}>
-                  {f.verdict}
-                </span>
-                <span className="text-gray-400">({(f.confidence * 100).toFixed(0)}% confidence)</span>
-              </div>
-              <div className="text-gray-600 mt-1">{f.evidence}</div>
-            </div>
+            <AttackDetail key={f.id} finding={f} />
           ))}
           {detail.grade !== "A" && detail.grade !== "N/A" && detail.remediation && (
             <div className="mt-3 p-3 bg-blue-50 rounded text-sm text-blue-800">

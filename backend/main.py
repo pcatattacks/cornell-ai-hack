@@ -38,6 +38,8 @@ REMEDIATION = {
     "goal_hijacking": "Implement strong topic boundaries with explicit refusal instructions. Use output validators to check responses stay on-topic. Consider a classifier layer that flags off-topic responses before sending.",
     "data_leakage": "Audit what data your chatbot has access to via RAG or tool calls. Apply principle of least privilege. Never give chatbots access to customer PII. Sanitize markdown rendering to prevent injection.",
     "guardrail_bypass": "Test your topic restrictions with adversarial inputs. Use both input and output filtering. Consider a secondary classifier that validates the chatbot stayed within its approved topics.",
+    "insecure_output_handling": "Sanitize all LLM outputs before rendering. Never render raw HTML or markdown from the model. Use Content Security Policy headers. Validate and escape outputs at every trust boundary.",
+    "indirect_prompt_injection": "Treat all external content as untrusted. Implement input/output filters. Use instruction hierarchy to separate system instructions from user content. Monitor for unusual patterns in retrieved content.",
 }
 
 
@@ -107,6 +109,8 @@ async def scan_endpoint(websocket: WebSocket):
         # --- Run attacks ---
         findings: list[dict] = []
         scan_aborted = False
+        # Track sent/response events to enrich findings
+        pending_attacks: dict = {}
 
         async for event in run_attacks_stagehand(
             scanner=scanner,
@@ -115,16 +119,29 @@ async def scan_endpoint(websocket: WebSocket):
             debug_cb=debug_cb,
         ):
             await websocket.send_json(event)
-            if event["type"] == "attack_verdict":
+
+            if event["type"] == "attack_sent":
+                pending_attacks[event["id"]] = {
+                    "name": event.get("name", ""),
+                    "payload": event.get("payload", ""),
+                }
+            elif event["type"] == "attack_response":
+                if event["id"] in pending_attacks:
+                    pending_attacks[event["id"]]["response"] = event.get("response", "")
+            elif event["type"] == "attack_verdict":
+                attack_info = pending_attacks.get(event["id"], {})
                 findings.append({
                     "id": event["id"],
                     "category": event["category"],
+                    "name": attack_info.get("name", ""),
+                    "payload": attack_info.get("payload", ""),
+                    "response": attack_info.get("response", ""),
                     "score": event["score"],
                     "verdict": event["verdict"],
                     "confidence": event["confidence"],
                     "evidence": event["evidence"],
                 })
-            if event["type"] in ("browser_died", "rate_limited"):
+            elif event["type"] in ("browser_died", "rate_limited"):
                 scan_aborted = True
 
         # --- Score + Report ---
@@ -169,7 +186,7 @@ def _build_report(url, platform, findings):
 
     category_scores = {}
     category_details = {}
-    for cat in ["system_prompt_extraction", "goal_hijacking", "data_leakage", "guardrail_bypass"]:
+    for cat in ["system_prompt_extraction", "goal_hijacking", "data_leakage", "guardrail_bypass", "insecure_output_handling", "indirect_prompt_injection"]:
         cat_findings = by_category.get(cat, [])
         score = calculate_category_score(cat_findings)
         category_scores[cat] = score

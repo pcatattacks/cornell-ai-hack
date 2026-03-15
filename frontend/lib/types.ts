@@ -37,6 +37,9 @@ export interface ScanReport {
   findings: Array<{
     id: number;
     category: string;
+    name: string;
+    payload: string;
+    response: string;
     score: number;
     verdict: string;
     confidence: number;
