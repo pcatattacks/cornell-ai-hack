@@ -104,6 +104,17 @@ export function ScanProgress({ events }: { events: WSEvent[] }) {
         {blocks.map((block, i) => (
           <BlockRow key={i} block={block} showDebug={showDebug} />
         ))}
+        {/* Loading indicator — shows when scan is active */}
+        {!isComplete && events.length > 0 && (
+          <div className="flex items-center gap-2 py-3 px-2 text-gray-400 text-sm">
+            <span className="flex gap-1">
+              <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+              <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+              <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+            </span>
+            <span>Working...</span>
+          </div>
+        )}
         <div ref={bottomRef} />
       </div>
     </div>

@@ -68,22 +68,18 @@ class StagehandScanner:
                 pass
 
     async def navigate(self, url: str):
-        """Navigate to the target URL and simulate user behavior to trigger lazy widgets."""
+        """Navigate to the target URL and trigger lazy-loaded widgets."""
         await self.session.navigate(url=url)
         await self._log(f"Navigated to {url}")
 
-        # Simulate real user browsing to trigger lazy-loaded chat widgets
+        # Single scroll action to trigger lazy-loaded widgets (reduces API calls)
         await asyncio.sleep(3)
         try:
-            await self.session.act(input="scroll down halfway on the page")
-            await asyncio.sleep(2)
-            await self.session.act(input="scroll down to the bottom of the page")
-            await asyncio.sleep(2)
-            await self.session.act(input="scroll back to the top of the page")
+            await self.session.act(input="scroll down to the bottom of the page and then scroll back to the top")
             await asyncio.sleep(3)
-            await self._log("Simulated user scrolling to trigger widgets")
+            await self._log("Scrolled page to trigger widgets")
         except Exception:
-            await asyncio.sleep(5)
+            await asyncio.sleep(3)
 
     async def dismiss_cookies(self):
         """Try to dismiss cookie consent banners."""
@@ -104,7 +100,7 @@ class StagehandScanner:
             return False
 
         # Step 2: Navigate to conversation view — handle menus, forms, overlays
-        for attempt in range(5):
+        for attempt in range(3):
             await self._log(f"Checking chat readiness (attempt {attempt + 1})...")
 
             # First, try to dismiss any blockers (email forms, menus, overlays)
@@ -123,38 +119,51 @@ class StagehandScanner:
         return False
 
     async def _find_and_click_launcher(self) -> bool:
-        """Find the chat widget launcher and click it. Retries with scroll."""
-        for attempt in range(3):
-            try:
-                observe_resp = await self.session.observe(
-                    instruction="find a floating chat widget button, chatbot launcher icon, or live chat bubble on this page",
-                )
-                results = observe_resp.data.result
-                if results:
-                    await self._log(f"Found {len(results)} chat elements (attempt {attempt + 1})")
-                    action = results[0].to_dict(exclude_none=True) if hasattr(results[0], 'to_dict') else results[0]
-                    await self.session.act(input=action)
-                    await asyncio.sleep(3)
-                    await self._log("Clicked chat launcher")
-                    return True
-            except Exception as e:
-                await self._log(f"Launcher search attempt {attempt + 1}: {e}")
+        """Find the chat widget launcher and click it."""
+        # Attempt 1: Look for chat launcher directly
+        try:
+            observe_resp = await self.session.observe(
+                instruction="find a floating chat widget button, chatbot launcher icon, or live chat bubble on this page",
+            )
+            results = observe_resp.data.result
+            if results:
+                await self._log(f"Found {len(results)} chat elements")
+                action = results[0].to_dict(exclude_none=True) if hasattr(results[0], 'to_dict') else results[0]
+                await self.session.act(input=action)
+                await asyncio.sleep(2)
+                await self._log("Clicked chat launcher")
+                return True
+        except Exception as e:
+            await self._log(f"Launcher search: {e}")
 
-            # Scroll to trigger lazy widgets
-            try:
-                await self.session.act(input="scroll down to the bottom of the page")
-                await asyncio.sleep(3)
-                await self.session.act(input="scroll back to the top of the page")
-                await asyncio.sleep(3)
-            except Exception:
-                await asyncio.sleep(3)
+        # Attempt 2: Scroll and try again
+        try:
+            await self.session.act(input="scroll down to the bottom of the page and then scroll back to the top")
+            await asyncio.sleep(3)
+        except Exception:
+            pass
 
-        # Final fallback — direct act
+        try:
+            observe_resp = await self.session.observe(
+                instruction="find a floating chat widget button, chatbot launcher icon, or live chat bubble on this page",
+            )
+            results = observe_resp.data.result
+            if results:
+                await self._log(f"Found {len(results)} chat elements after scroll")
+                action = results[0].to_dict(exclude_none=True) if hasattr(results[0], 'to_dict') else results[0]
+                await self.session.act(input=action)
+                await asyncio.sleep(2)
+                await self._log("Clicked chat launcher")
+                return True
+        except Exception:
+            pass
+
+        # Fallback: direct click attempt
         try:
             await self.session.act(
                 input="click the chat widget button in the bottom-right corner of the page",
             )
-            await asyncio.sleep(3)
+            await asyncio.sleep(2)
             await self._log("Clicked chat launcher via fallback")
             return True
         except Exception:
