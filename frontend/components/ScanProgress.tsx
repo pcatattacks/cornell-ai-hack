@@ -4,9 +4,15 @@ import { useEffect, useRef, useState } from "react";
 import type { WSEvent } from "@/lib/types";
 
 const VERDICT_STYLES: Record<string, string> = {
-  VULNERABLE: "text-red-600 bg-red-50",
-  PARTIAL: "text-yellow-600 bg-yellow-50",
-  RESISTANT: "text-green-600 bg-green-50",
+  VULNERABLE: "text-red-700 bg-red-50 border-red-200",
+  PARTIAL: "text-yellow-700 bg-yellow-50 border-yellow-200",
+  RESISTANT: "text-green-700 bg-green-50 border-green-200",
+};
+
+const VERDICT_ICONS: Record<string, string> = {
+  VULNERABLE: "\u{1F534}",
+  PARTIAL: "\u{1F7E1}",
+  RESISTANT: "\u{1F7E2}",
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -29,8 +35,8 @@ export function ScanProgress({ events }: { events: WSEvent[] }) {
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const startTimeRef = useRef<number | null>(null);
+  const [showDebug, setShowDebug] = useState(false);
 
-  // Derive scan state from events
   const isComplete = events.some((e) => e.type === "scan_complete" || e.type === "error");
   const attackCount = events.filter((e) => e.type === "attack_verdict").length;
   const totalAttacks = (() => {
@@ -44,26 +50,21 @@ export function ScanProgress({ events }: { events: WSEvent[] }) {
   })();
 
   useEffect(() => {
-    // Start timer on first event
     if (events.length > 0 && !startTimeRef.current) {
       startTimeRef.current = Date.now();
     }
-
     if (startTimeRef.current && !isComplete) {
       timerRef.current = setInterval(() => {
         setElapsed(Math.floor((Date.now() - startTimeRef.current!) / 1000));
       }, 1000);
     }
-
     if (isComplete && timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
-      // Set final elapsed time
       if (startTimeRef.current) {
         setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));
       }
     }
-
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
@@ -73,26 +74,35 @@ export function ScanProgress({ events }: { events: WSEvent[] }) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [events]);
 
+  // Group events into attack blocks for clean rendering
+  const blocks = buildBlocks(events);
+
   return (
     <div className="w-full max-w-2xl mx-auto">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-semibold text-gray-900">Scan Progress</h2>
-        <div className="flex items-center gap-2 text-sm text-gray-500 font-mono">
-          <span>&#9201;</span>
-          <span>{formatTime(elapsed)}</span>
-          {attackCount > 0 && (
-            <>
-              <span className="text-gray-300">·</span>
-              <span>
-                {attackCount}{totalAttacks ? `/${totalAttacks}` : ""} attacks
-              </span>
-            </>
-          )}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowDebug(!showDebug)}
+            className="text-xs text-gray-400 hover:text-gray-600"
+          >
+            {showDebug ? "Hide" : "Show"} debug
+          </button>
+          <div className="flex items-center gap-2 text-sm text-gray-500 font-mono">
+            <span>&#9201;</span>
+            <span>{formatTime(elapsed)}</span>
+            {attackCount > 0 && (
+              <>
+                <span className="text-gray-300">·</span>
+                <span>{attackCount}{totalAttacks ? `/${totalAttacks}` : ""} attacks</span>
+              </>
+            )}
+          </div>
         </div>
       </div>
-      <div className="space-y-2 font-mono text-sm max-h-[600px] overflow-y-auto">
-        {events.map((event, i) => (
-          <EventRow key={i} event={event} />
+      <div className="space-y-1 text-sm max-h-[600px] overflow-y-auto">
+        {blocks.map((block, i) => (
+          <BlockRow key={i} block={block} showDebug={showDebug} />
         ))}
         <div ref={bottomRef} />
       </div>
@@ -100,69 +110,158 @@ export function ScanProgress({ events }: { events: WSEvent[] }) {
   );
 }
 
-function EventRow({ event }: { event: WSEvent }) {
-  switch (event.type) {
-    case "scan_start":
-      return (
-        <div className="text-gray-600">
-          Scanning <span className="font-semibold text-gray-900">{String(event.url)}</span>...
-        </div>
-      );
-    case "widget_detected":
-      return (
-        <div className="text-green-700">
-          &#10003; Widget detected: <span className="font-semibold">{String(event.platform)}</span>
-        </div>
-      );
-    case "widget_not_found":
-      return <div className="text-red-600">&#10007; {String(event.message)}</div>;
-    case "prechat_status": {
-      const labels: Record<string, string> = {
-        cookie_dismissed: "Cookie banner dismissed",
-        form_filled: "Pre-chat form filled",
-        widget_opened: "Chat widget opened",
-        captcha_blocked: "CAPTCHA detected - skipping",
-      };
-      return <div className="text-blue-600">&#10003; {labels[String(event.action)] || String(event.action)}</div>;
+interface Block {
+  type: "status" | "attack" | "debug" | "warning";
+  events: WSEvent[];
+}
+
+function buildBlocks(events: WSEvent[]): Block[] {
+  const blocks: Block[] = [];
+  let currentAttack: WSEvent[] = [];
+
+  for (const event of events) {
+    if (event.type === "attack_sent") {
+      if (currentAttack.length > 0) {
+        blocks.push({ type: "attack", events: currentAttack });
+      }
+      currentAttack = [event];
+    } else if (event.type === "attack_response" || event.type === "attack_verdict") {
+      currentAttack.push(event);
+      if (event.type === "attack_verdict") {
+        blocks.push({ type: "attack", events: currentAttack });
+        currentAttack = [];
+      }
+    } else if (event.type === "debug") {
+      blocks.push({ type: "debug", events: [event] });
+    } else if (event.type === "rate_limited" || event.type === "browser_died") {
+      blocks.push({ type: "warning", events: [event] });
+    } else {
+      blocks.push({ type: "status", events: [event] });
     }
-    case "attack_sent":
-      return (
-        <div className="text-gray-500 mt-3">
-          <span className="text-gray-400">[{String(event.progress)}]</span>{" "}
-          <span className="font-medium text-gray-700">{String(event.name)}</span>
-          <span className="text-gray-300 mx-1">·</span>
-          <span className="text-gray-400 text-xs">{CATEGORY_LABELS[String(event.category)] || String(event.category)}</span>
-        </div>
-      );
-    case "attack_response":
-      return null; // Don't show raw response in progress — it's shown in the report
-    case "attack_verdict": {
-      const verdict = String(event.verdict);
-      return (
-        <div className={`ml-4 px-2 py-1 rounded ${VERDICT_STYLES[verdict] || ""}`}>
-          {verdict === "VULNERABLE" ? "\u{1F534}" : verdict === "PARTIAL" ? "\u{1F7E1}" : "\u{1F7E2}"} {verdict} — {truncate(String(event.evidence), 100)}
-        </div>
-      );
-    }
-    case "rate_limited":
-      return (
-        <div className="mt-3 px-3 py-2 bg-yellow-50 border border-yellow-200 rounded text-yellow-800 text-sm">
-          &#9888; {String(event.message)}
-        </div>
-      );
-    case "browser_died":
-      return (
-        <div className="mt-3 px-3 py-2 bg-yellow-50 border border-yellow-200 rounded text-yellow-800 text-sm">
-          &#9888; {String(event.message)}
-        </div>
-      );
-    case "debug":
-      return <div className="text-gray-400 text-xs ml-4 font-mono">[debug] {String(event.message)}</div>;
-    case "error":
-      return <div className="text-red-600 font-semibold">Error: {String(event.message)}</div>;
-    default:
-      return null;
   }
+  if (currentAttack.length > 0) {
+    blocks.push({ type: "attack", events: currentAttack });
+  }
+  return blocks;
+}
+
+function BlockRow({ block, showDebug }: { block: Block; showDebug: boolean }) {
+  if (block.type === "debug") {
+    if (!showDebug) return null;
+    return (
+      <div className="text-gray-400 text-xs font-mono pl-4">
+        [debug] {String(block.events[0].message)}
+      </div>
+    );
+  }
+
+  if (block.type === "warning") {
+    return (
+      <div className="mt-2 px-3 py-2 bg-yellow-50 border border-yellow-200 rounded text-yellow-800 text-sm">
+        &#9888; {String(block.events[0].message)}
+      </div>
+    );
+  }
+
+  if (block.type === "status") {
+    const event = block.events[0];
+    switch (event.type) {
+      case "scan_start":
+        return (
+          <div className="text-gray-600 py-1">
+            Scanning <span className="font-semibold text-gray-900">{String(event.url)}</span>...
+          </div>
+        );
+      case "widget_detected":
+        return (
+          <div className="text-green-700 py-1">
+            &#10003; Widget detected: <span className="font-semibold">{String(event.platform)}</span>
+          </div>
+        );
+      case "widget_not_found":
+        return <div className="text-red-600 py-1">&#10007; {String(event.message)}</div>;
+      case "prechat_status": {
+        const labels: Record<string, string> = {
+          cookie_dismissed: "Cookie banner dismissed",
+          form_filled: "Pre-chat form filled",
+          widget_opened: "Chat widget opened",
+        };
+        return <div className="text-blue-600 py-1">&#10003; {labels[String(event.action)] || String(event.action)}</div>;
+      }
+      case "error":
+        return <div className="text-red-600 font-semibold py-1">Error: {String(event.message)}</div>;
+      default:
+        return null;
+    }
+  }
+
+  // Attack block — the main content
+  if (block.type === "attack") {
+    const sent = block.events.find((e) => e.type === "attack_sent");
+    const response = block.events.find((e) => e.type === "attack_response");
+    const verdict = block.events.find((e) => e.type === "attack_verdict");
+
+    if (!sent) return null;
+
+    const verdictStr = verdict ? String(verdict.verdict) : "";
+    const verdictStyle = VERDICT_STYLES[verdictStr] || "";
+    const verdictIcon = VERDICT_ICONS[verdictStr] || "";
+
+    return (
+      <div className="mt-3 rounded-lg border border-gray-100 overflow-hidden">
+        {/* Attack header */}
+        <div className="px-3 py-2 bg-gray-50 flex items-center justify-between">
+          <div>
+            <span className="text-gray-400 text-xs font-mono">[{String(sent.progress)}]</span>{" "}
+            <span className="font-medium text-gray-800">{String(sent.name)}</span>
+            <span className="text-gray-300 mx-1">·</span>
+            <span className="text-gray-400 text-xs">{CATEGORY_LABELS[String(sent.category)] || String(sent.category)}</span>
+          </div>
+          {sent.reference_url ? (
+            <a
+              href={String(sent.reference_url)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-400 hover:text-blue-600 text-xs"
+            >
+              {"\u{1F517}"} {truncate(String(sent.source || "source"), 25)}
+            </a>
+          ) : null}
+        </div>
+
+        {/* Payload */}
+        <div className="px-3 py-2 border-t border-gray-100">
+          <span className="text-gray-400 text-xs">&#8594; </span>
+          <span className="text-gray-600 text-sm font-mono">{truncate(String(sent.payload), 120)}</span>
+        </div>
+
+        {/* Response */}
+        {response && String(response.response) !== "(no response / timeout)" && (
+          <div className="px-3 py-2 border-t border-gray-100 bg-blue-50/30">
+            <span className="text-blue-400 text-xs">&#8592; </span>
+            <span className="text-gray-700 text-sm">{truncate(String(response.response), 150)}</span>
+          </div>
+        )}
+
+        {/* Verdict */}
+        {verdict && (
+          <div className={`px-3 py-2 border-t ${verdictStyle}`}>
+            {verdictIcon} <span className="font-semibold text-sm">{verdictStr}</span>
+            <span className="text-gray-500 text-sm"> — {truncate(String(verdict.evidence), 100)}</span>
+          </div>
+        )}
+
+        {/* Loading state — no verdict yet */}
+        {!verdict && (
+          <div className="px-3 py-2 border-t border-gray-100 text-gray-400 text-sm">
+            Waiting for response...
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return null;
 }
 
 function truncate(str: string, max: number): string {

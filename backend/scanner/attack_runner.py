@@ -323,8 +323,8 @@ async def run_attacks_stagehand(
             }
             return
 
-        # Stop if same response repeated 3+ times (reading stale responses)
-        if repeated_response_count >= 3:
+        # Stop if same response repeated 2+ times (reading stale responses)
+        if repeated_response_count >= 2:
             if debug_cb:
                 await debug_cb(f"Same response repeated {repeated_response_count} times — likely rate-limited")
             yield {
