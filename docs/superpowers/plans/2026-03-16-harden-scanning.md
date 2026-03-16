@@ -191,6 +191,45 @@ async def _extract_chat_messages(self) -> list[dict]:
 
 **Why polling with roles:** Instead of extracting a single "latest response" (which can be the user's own message), we extract the FULL transcript with roles. Then we compare against the baseline to find genuinely new assistant messages. This eliminates false positives.
 
+**Handling edge cases in read_response:**
+
+| Case | Detection | Action |
+|---|---|---|
+| Slow response (5-15s) | Poll 5 times × 3s = 15s | Normal — captured on later poll |
+| No response (timeout) | 5 polls all return same baseline | Return None → "timeout" verdict |
+| Rate limiting | Response contains "too many messages" etc. | attack_runner detects and stops scan |
+| Stale/cached response | Text already in `_seen_responses` set | Skip it, keep polling |
+| Streaming response | Text changes between consecutive polls | Add stability check — require same text on 2 consecutive polls before returning |
+
+The streaming case needs a stability check in the polling loop:
+
+```python
+# Inside the polling loop, after finding a new assistant message:
+last_seen_text = None
+stable_count = 0
+
+for attempt in range(8):  # more attempts to allow streaming to finish
+    await asyncio.sleep(2)
+    current = await self._extract_chat_messages()
+
+    if len(current) > baseline_count:
+        last = current[-1]
+        if last["role"] == "assistant" and last["text"] != baseline_last_text:
+            if last["text"] == last_seen_text:
+                stable_count += 1
+                if stable_count >= 2:  # same text on 2 consecutive polls = streaming done
+                    if last["text"] not in self._seen_responses:
+                        self._seen_responses.add(last["text"])
+                        return last["text"]
+            else:
+                stable_count = 0
+                last_seen_text = last["text"]
+
+return None  # timeout
+```
+
+This handles streaming: the response grows word-by-word, but we only return it once it's stable (same text on 2 consecutive 2s polls = 4s of no changes).
+
 ### Phase 1 alternatives: dismissOverlays helper
 
 Add a lightweight overlay dismissal before the agent, for common cases:
