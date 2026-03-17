@@ -12,6 +12,7 @@ export type WSEventType =
   | "human_handoff"
   | "send_blocked"
   | "debug"
+  | "session_live_view"
   | "error";
 
 export interface WSEvent {

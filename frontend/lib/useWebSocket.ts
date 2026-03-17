@@ -113,6 +113,8 @@ export function useScanWebSocket() {
   const [state, setState] = useState<ScanState>("idle");
   const [report, setReport] = useState<ScanReport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [liveViewUrl, setLiveViewUrl] = useState<string | null>(null);
+  const [targetUrl, setTargetUrl] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const urlRef = useRef<string>("");
 
@@ -120,6 +122,8 @@ export function useScanWebSocket() {
     setEvents([]);
     setReport(null);
     setError(null);
+    setLiveViewUrl(null);
+    setTargetUrl(null);
     setState("scanning");
     urlRef.current = url;
 
@@ -138,6 +142,17 @@ export function useScanWebSocket() {
         console.error("Received non-JSON WebSocket message", event.data);
         return;
       }
+      // Capture live view URL without adding to events array
+      if (data.type === "session_live_view") {
+        setLiveViewUrl((data as unknown as { url: string }).url);
+        return;
+      }
+
+      // Capture target URL from scan_start
+      if (data.type === "scan_start") {
+        setTargetUrl((data as unknown as { url: string }).url);
+      }
+
       setEvents((prev) => [...prev, data]);
 
       if (data.type === "scan_complete") {
@@ -168,6 +183,7 @@ export function useScanWebSocket() {
       wsRef.current.close();
       wsRef.current = null;
     }
+    setLiveViewUrl(null);
     // Build partial report from events collected so far
     setEvents((currentEvents) => {
       const partialReport = buildPartialReport(currentEvents, urlRef.current);
@@ -184,8 +200,10 @@ export function useScanWebSocket() {
     setEvents([]);
     setReport(null);
     setError(null);
+    setLiveViewUrl(null);
+    setTargetUrl(null);
     setState("idle");
   }, []);
 
-  return { events, state, report, error, startScan, stopScan, reset };
+  return { events, state, report, error, liveViewUrl, targetUrl, startScan, stopScan, reset };
 }
