@@ -1,3 +1,68 @@
+# Harden Scanning v2 — Fix Regressions + Robust Architecture
+
+> **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Fix the regressions from the v1 hardening attempt (broken sending, broken extraction, confused discovery, slowness) while achieving the original goals of robust chatbot detection and reduced API costs.
+
+**Architecture:** Keep the three-phase structure (agent setup → cached sending → polling extraction) but fix each phase based on real-world failures. Use observe-then-act caching for the send button, simple proven extraction schema, and mid-scan overlay recovery.
+
+**Tech Stack:** Stagehand v3 Python SDK, Browserbase, AsyncIO
+
+---
+
+## What Broke in v1 and Why
+
+| Issue | Root Cause | Fix in This Plan |
+|---|---|---|
+| Slowness | `_dismiss_common_overlays` makes 2 failing act() calls (~10s wasted on most sites) | Remove it — agent handles overlays |
+| Tidio: typed but never sent | `"press Enter or click the send button"` too vague; many send buttons are icon-only (arrow/paper plane) | Observe send button once, cache it, click cached action for all 30 messages |
+| Crisp: confused by demo elements | Agent instruction too broad — "chat bubbles, buttons" matches screenshots/demos on chatbot product pages | Strengthen instruction to distinguish real interactive widgets from page content |
+| 3 sites: can't extract responses | Role-based full-transcript extraction (`{role, text}[]`) too complex for Haiku; old simple schema worked | Revert to proven simple schema (`chatbot_response` + `response_found`) |
+| Streaming stability over-polling | 8 polls × 2s with stability check = up to 16s per response even when response is ready | Lighter polling: 3s initial wait, up to 3 retries, optional stability check |
+| Mid-scan overlays | Not handled — overlay after message 10 breaks remaining 20 attacks | Retry-with-recovery: if send fails, dismiss overlay, retry once |
+
+---
+
+## File Changes
+
+```
+backend/scanner/
+├── stagehand_scanner.py    # REWRITE — fix all three phases
+backend/
+├── main.py                 # MINOR — remove dismiss_cookies call (already done in v1)
+```
+
+No other files change. The scanner interface stays the same: `init`, `close`, `navigate`, `find_and_open_chat`, `send_message`, `read_response`, `send_and_read`.
+
+---
+
+## Task 1: Rewrite stagehand_scanner.py
+
+### Overview
+
+The scanner keeps the three-phase structure but fixes each phase:
+
+- **Phase 1 (Discovery):** Agent with improved instruction — no pre-pass overlay dismissal
+- **Phase 2 (Sending):** Observe-then-act for send button + template variables for typing + overlay recovery
+- **Phase 3 (Reading):** Simple proven extraction schema + polling with stale detection
+
+### State cached after setup
+
+After `find_and_open_chat` succeeds, cache two action objects for the attack loop:
+
+```python
+self._cached_send_action = None  # observed send button action
+```
+
+The send button is observed on the first `send_message` call and reused for all subsequent sends. If it goes stale (element re-rendered), `self_heal=True` recovers it.
+
+---
+
+- [ ] **Step 1: Write the complete scanner file**
+
+Replace the entire `backend/scanner/stagehand_scanner.py` with:
+
+```python
 """Stagehand-based chat scanner — find, open, and interact with any chatbot.
 
 Three-phase architecture:
@@ -43,10 +108,10 @@ class StagehandScanner:
         self.client = AsyncStagehand(
             browserbase_api_key=os.getenv("BROWSERBASE_API_KEY"),
             browserbase_project_id=os.getenv("BROWSERBASE_PROJECT_ID"),
-            model_api_key=os.getenv("GOOGLE_API_KEY"),
+            model_api_key=os.getenv("ANTHROPIC_API_KEY"),
         )
         self.session = await self.client.sessions.start(
-            model_name="google/gemini-2.5-flash",
+            model_name="anthropic/claude-haiku-4-5-20251001",
             self_heal=True,
             wait_for_captcha_solves=True,
             dom_settle_timeout_ms=5000,
@@ -94,7 +159,7 @@ class StagehandScanner:
             await self._log("Starting agent-driven chatbot setup...")
             await self.session.execute(
                 agent_config={
-                    "model": "google/gemini-2.5-flash",
+                    "model": "anthropic/claude-haiku-4-5-20251001",
                 },
                 execute_options={
                     "instruction": (
@@ -224,135 +289,19 @@ class StagehandScanner:
 
         return False
 
-    async def _verify_message_sent(self, message: str) -> bool:
-        """Verify that a message was actually sent by checking the chat history.
-
-        Returns True if the message (or a close match) appears as a sent
-        message in the conversation. This catches silent send failures where
-        act() reports success but the message never left the input.
-        """
-        await asyncio.sleep(1)  # brief wait for UI to update
+    async def _try_dismiss_overlay(self) -> bool:
+        """Attempt to dismiss a mid-scan overlay blocking the chat."""
         try:
-            result = await self.session.extract(
-                instruction=(
-                    f"Check if the following message appears in the chat conversation as a SENT "
-                    f"message from the user (visitor): '{message[:80]}'\n"
-                    "Look in the chat history/conversation area, NOT in the text input field. "
-                    "The message should appear as a sent bubble or block in the conversation."
+            await self.session.act(
+                input=(
+                    "click the Close, Dismiss, Skip, X, or 'No thanks' button on any "
+                    "popup, modal, overlay, or survey that appeared over the chat"
                 ),
-                schema={
-                    "type": "object",
-                    "properties": {
-                        "message_found_in_chat": {
-                            "type": "boolean",
-                            "description": "True if the message appears in the chat conversation as a sent message, not just in the input field",
-                        },
-                    },
-                    "required": ["message_found_in_chat"],
-                },
             )
-            found = (
-                result.data.result.get("message_found_in_chat", False)
-                if isinstance(result.data.result, dict)
-                else False
-            )
-            await self._log(f"Send verification: {'confirmed' if found else 'NOT found in chat'}")
-            return found
-        except Exception as e:
-            await self._log(f"Send verification failed: {e}")
-            # If verification itself fails, assume sent to avoid blocking
-            return True
-
-    # ── Recovery ─────────────────────────────────────────────────────────
-
-    async def _recover_send_failure(self) -> bool:
-        """Agent recovery when a message failed to send.
-
-        Describes the expected visual layout so the agent can distinguish
-        the chat widget from overlays and take the right corrective action.
-        """
-        try:
-            await self._log("Recovering from send failure...")
-            await self.session.execute(
-                agent_config={
-                    "model": "google/gemini-2.5-flash",
-                },
-                execute_options={
-                    "instruction": (
-                        "I tried to send a chat message but it didn't go through.\n\n"
-                        "The page should have a chat widget — a panel or window with:\n"
-                        "- A conversation area showing sent and received messages\n"
-                        "- A text input field at the bottom for typing messages\n"
-                        "- A send button (arrow icon, paper plane, or 'Send') next to the input\n\n"
-                        "Check these things in order:\n\n"
-                        "1. Is the chat widget still visible? If it's gone, find the chat launcher "
-                        "button (usually bottom-right corner) and reopen it.\n\n"
-                        "2. Is something overlaying the chat? Overlays like email forms, surveys, or "
-                        "bottom sheets appear ON TOP of the chat panel — they have their own background "
-                        "and their own buttons. If you see one, dismiss it using its own Skip/No thanks/"
-                        "X button. The overlay's X is ON the overlay itself, not at the top of the chat "
-                        "widget. Do NOT click the chat widget's own close/minimize button.\n\n"
-                        "3. Is there text sitting in the chat input that hasn't been sent? If so, click "
-                        "the send button to send it.\n\n"
-                        "4. Is the text input field visible and ready for typing?\n\n"
-                        "IMPORTANT: After EACH action you take, verify the chat widget is still open. "
-                        "If you accidentally closed it, reopen it immediately.\n\n"
-                        "You're done when: the chat input field is visible, empty, and ready for typing.\n"
-                        "Do NOT type any new messages."
-                    ),
-                    "max_steps": 10,
-                },
-            )
-            await self._log("Send recovery completed")
+            await self._log("Mid-scan overlay dismissed")
             await asyncio.sleep(1)
             return True
-        except Exception as e:
-            await self._log(f"Send recovery failed: {e}")
-            return False
-
-    async def _recover_read_failure(self) -> bool:
-        """Agent recovery when no chatbot response was detected.
-
-        Different focus from send recovery — checks whether the message was
-        actually sent, whether an overlay is blocking the response area, etc.
-        """
-        try:
-            await self._log("Recovering from read failure...")
-            await self.session.execute(
-                agent_config={
-                    "model": "google/gemini-2.5-flash",
-                },
-                execute_options={
-                    "instruction": (
-                        "I sent a chat message but couldn't detect the chatbot's response.\n\n"
-                        "The chat widget should be a panel/window with a conversation area showing "
-                        "messages and a text input at the bottom.\n\n"
-                        "Check these things in order:\n\n"
-                        "1. Is the chat widget still visible? If it's gone, find the chat launcher "
-                        "and reopen it.\n\n"
-                        "2. Is something overlaying the chat conversation area? Overlays (email forms, "
-                        "surveys, bottom sheets) appear ON TOP of the chat panel with their own "
-                        "background. If you see one, dismiss it using its own buttons (Skip, No thanks, "
-                        "X on the overlay itself). Do NOT click the chat widget's close button.\n\n"
-                        "3. Does my sent message appear in the conversation? Look in the chat history — "
-                        "if the message is NOT there but is still sitting in the input field, click the "
-                        "send button to send it.\n\n"
-                        "4. Is the chatbot still typing or loading? Look for a typing indicator, "
-                        "loading spinner, or animated dots. If so, do nothing — the response is coming.\n\n"
-                        "IMPORTANT: After EACH action you take, verify the chat widget is still open. "
-                        "If you accidentally closed it, reopen it immediately.\n\n"
-                        "You're done when: the chat conversation is visible with no overlays blocking it, "
-                        "and the input field is ready for the next message.\n"
-                        "Do NOT type any new messages."
-                    ),
-                    "max_steps": 10,
-                },
-            )
-            await self._log("Read recovery completed")
-            await asyncio.sleep(1)
-            return True
-        except Exception as e:
-            await self._log(f"Read recovery failed: {e}")
+        except Exception:
             return False
 
     # ── Phase 3: Response reading ────────────────────────────────────────
@@ -450,44 +399,115 @@ class StagehandScanner:
     # ── Convenience ──────────────────────────────────────────────────────
 
     async def send_and_read(self, message: str) -> Optional[str]:
-        """Send a message and read the response, with verified sending and recovery.
-
-        Flow:
-        1. Send message → verify it appears in chat history
-        2. If not verified: retry send once (cheap, handles transient failures)
-        3. If still not verified: agent diagnose-and-recover → final retry
-        4. Read response with polling
-        5. If no response: agent diagnose-and-recover → retry read
-        """
-        # ── Send with verification ───────────────────────────────────────
-        verified = False
-
+        """Send a message and read the response, with overlay recovery."""
         sent = await self.send_message(message)
-        if sent:
-            verified = await self._verify_message_sent(message)
+        if not sent:
+            # Maybe an overlay appeared — try to dismiss and retry
+            dismissed = await self._try_dismiss_overlay()
+            if dismissed:
+                sent = await self.send_message(message)
+            if not sent:
+                return None
+        return await self.read_response(message)
+```
 
-        if not verified:
-            # Cheap retry — handles transient failures (button didn't register, etc.)
-            await self._log("Message not verified in chat, retrying send...")
-            sent = await self.send_message(message)
-            if sent:
-                verified = await self._verify_message_sent(message)
+- [ ] **Step 2: Verify import works**
 
-        if not verified:
-            # Something structural is wrong — agent diagnoses and fixes
-            await self._recover_send_failure()
-            sent = await self.send_message(message)
-            if sent:
-                verified = await self._verify_message_sent(message)
+Run: `cd backend && source ../.venv/bin/activate && python -c "from scanner.stagehand_scanner import StagehandScanner; print('OK')"`
+Expected: `OK`
 
-        if not verified:
-            await self._log("Message could not be sent after recovery")
-            return None
+- [ ] **Step 3: Run existing tests**
 
-        # ── Read response ────────────────────────────────────────────────
-        response = await self.read_response(message)
-        if response is None:
-            await self._recover_read_failure()
-            response = await self.read_response(message)
+Run: `cd backend && python -m pytest tests/ -v`
+Expected: All 23 tests pass (scanner isn't unit-tested directly; tests cover scoring, analyzer, legacy modules)
 
-        return response
+- [ ] **Step 4: Commit**
+
+```bash
+git add backend/scanner/stagehand_scanner.py
+git commit -m "fix: rewrite scanner — observe-then-act send, simple extraction, overlay recovery"
+```
+
+---
+
+## Task 2: Verify main.py is correct
+
+main.py was already updated in v1 to remove the `dismiss_cookies` call. Verify it's correct.
+
+- [ ] **Step 1: Read main.py and confirm no dismiss_cookies reference**
+
+Check that line ~124 reads:
+```python
+        # --- Find and open chat widget (handles overlays/cookies internally) ---
+        chat_found = await scanner.find_and_open_chat()
+```
+
+No changes needed if this is already the case.
+
+---
+
+## Design Decisions Explained
+
+### Why remove `_dismiss_common_overlays`?
+
+It made 2 act() calls that **fail on most sites** (no cookie banner, no popup), each waiting for timeout. ~10s wasted. The agent handles overlays as step 1 of its instruction — it's smarter about whether overlays actually exist.
+
+### Why observe-then-act for the send button?
+
+The send button is the same element for all 30 messages. Observing it once and reusing the action object means:
+- First message: 1 LLM call (observe) + 0 LLM calls (act with cached action)
+- Messages 2-30: 0 LLM calls (reuse cached action)
+- **Saves 29 LLM calls** vs. asking the LLM to "click send" each time
+
+If the DOM re-renders and the cached selector goes stale, `self_heal=True` recovers, and we fall back to a fresh act() instruction.
+
+### Why NOT observe-then-act for typing?
+
+The observe pattern returns an action like `{selector: "textarea#input", method: "fill"}` — but we can't inject different message text into it each time. Template variables (`%message%`) are designed for this: the instruction template caches, only the variable changes. Best of both approaches.
+
+### Why no f-string fallback for typing?
+
+f-strings (`f'type "{message}" into...'`) embed the full attack payload into the LLM instruction. This means: (1) every call is a unique instruction → zero cache hits, (2) payload text with quotes, special characters, or adversarial instructions can confuse the LLM, (3) it's the slowest and most flaky option. Template variables substitute client-side *after* selector resolution, avoiding all three issues. If template variables fail, the whole send fails and overlay recovery kicks in — that's safer than silently degrading to f-strings.
+
+### Why the simple extraction schema over role-based?
+
+The role-based schema asked Haiku to extract an **array of {role, text} objects** from arbitrary chat UIs — classifying every message as user or assistant. This is a hard task that failed on 3 of 5 test sites.
+
+The simple schema asks one question: "What's the latest bot response?" — a `{chatbot_response, response_found}` object. This worked reliably on all 5 test sites before v1 changes. It's less elegant but it works.
+
+### Why retry-with-recovery for mid-scan overlays?
+
+Some chatbots show feedback surveys, email capture, or "talk to human?" prompts after N messages. If we don't handle these, the remaining attacks all fail.
+
+The recovery is in `send_and_read`: if `send_message` fails, try `_try_dismiss_overlay` once, then retry. This adds **0 overhead** in the normal case (overlay dismissal only runs on failure) and saves the remaining attacks when an overlay appears.
+
+### Streaming stability check
+
+Instead of polling 8 times looking for stability, we do one extra extraction 2s after finding a response. If the text is the same → streaming is done. If it changed → we use the newer (more complete) text. This adds only 1 extra extract call and 2s, versus the v1 approach of up to 16s.
+
+---
+
+## Cost Impact (Revised)
+
+| Action | Before (old code) | After (this plan) |
+|---|---|---|
+| Navigate + scroll | 2 act() calls | 0 (just sleep) |
+| Cookie dismissal | 1 act() call | 0 (agent handles it) |
+| Agent setup | N/A | 1 execute() (5-15 steps) |
+| Find + open widget | 5-15 act/observe calls | Included in agent |
+| Send message (×30) | 2 act() calls each = 60 | 1st: 1 observe + 1 template act + 1 cached act = 3. Rest: 1 template act + 1 cached act ≈ 1 LLM call each = ~32 total |
+| Read response (×30) | 1-3 extract each = 30-90 | 1-2 extract each = 30-60 total |
+| **Total LLM calls** | **~100-170** | **~45-80** |
+
+---
+
+## Verification
+
+Test on these sites (same as v1 plan):
+
+1. **hackathon.cornell.edu/ai** — widget in bottom-right, verify all 30 attacks get responses
+2. **assistant-ui.com** — center-page chat bar, verify messages send and responses extract
+3. **crisp.chat** — product page with demo content AND real widget, verify agent finds the real one
+4. **chatgpt.com** — streaming responses, verify stability check captures complete response
+5. **A site with no chatbot** (e.g., example.com) — verify graceful "No Chatbot Detected"
+6. **tidio.com** — verify send button is found and clicked (icon-only send button)

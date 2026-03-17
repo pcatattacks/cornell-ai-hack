@@ -121,11 +121,7 @@ async def scan_endpoint(websocket: WebSocket):
         # --- Navigate to target ---
         await scanner.navigate(url)
 
-        # --- Dismiss cookies ---
-        await scanner.dismiss_cookies()
-        await websocket.send_json({"type": "prechat_status", "action": "cookie_dismissed"})
-
-        # --- Find and open chat widget ---
+        # --- Find and open chat widget (handles overlays/cookies internally) ---
         chat_found = await scanner.find_and_open_chat()
         if not chat_found:
             await websocket.send_json({
