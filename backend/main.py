@@ -118,6 +118,14 @@ async def scan_endpoint(websocket: WebSocket):
         scanner = StagehandScanner(debug_cb=debug_cb)
         await scanner.init()
 
+        # --- Send live view URL to frontend ---
+        live_view_url = await scanner.get_live_view_url()
+        if live_view_url:
+            await websocket.send_json({
+                "type": "session_live_view",
+                "url": live_view_url,
+            })
+
         # --- Navigate to target ---
         await scanner.navigate(url)
 
