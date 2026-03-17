@@ -148,6 +148,8 @@ async def scan_endpoint(websocket: WebSocket):
         async for event in run_attacks_stagehand(
             scanner=scanner,
             anthropic_client=anthropic_client,
+            sample_size=30,
+            strategy="priority",
             delay_seconds=3.0,
             debug_cb=debug_cb,
         ):

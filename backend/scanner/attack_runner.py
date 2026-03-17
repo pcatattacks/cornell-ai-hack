@@ -303,11 +303,17 @@ async def run_attacks_stagehand(
     scanner: StagehandScanner,
     anthropic_client: anthropic.AsyncAnthropic,
     max_per_category: int | None = None,
+    sample_size: int | None = None,
+    strategy: str = "priority",
     delay_seconds: float = 3.0,
     debug_cb=None,
 ) -> AsyncGenerator[dict, None]:
     """Run attacks using Stagehand scanner."""
-    payloads = load_payloads(max_per_category=max_per_category)
+    payloads = load_payloads(
+        max_per_category=max_per_category,
+        sample_size=sample_size,
+        strategy=strategy,
+    )
     consecutive_failures = 0
     last_response = None
     repeated_response_count = 0
