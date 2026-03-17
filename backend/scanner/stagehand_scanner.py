@@ -66,6 +66,29 @@ class StagehandScanner:
         await self._log(f"Session started: {self.session_id}")
         await self._log(f"Live view: https://www.browserbase.com/sessions/{self.session_id}")
 
+    async def get_live_view_url(self) -> Optional[str]:
+        """Get the Browserbase live view embed URL for this session."""
+        if not self.session_id:
+            return None
+        try:
+            import httpx
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    f"https://api.browserbase.com/v1/sessions/{self.session_id}/debug",
+                    headers={"X-BB-API-Key": os.getenv("BROWSERBASE_API_KEY", "")},
+                    timeout=10.0,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                url = data.get("debuggerFullscreenUrl")
+                if url:
+                    url = f"{url}&navbar=false"
+                    await self._log(f"Live view embed URL ready")
+                    return url
+        except Exception as e:
+            await self._log(f"Could not get live view URL: {e}")
+        return None
+
     async def close(self):
         """End the Stagehand session."""
         if self.session:
