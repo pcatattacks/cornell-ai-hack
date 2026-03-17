@@ -1,18 +1,20 @@
 "use client";
 
 import { ScanInput } from "@/components/ScanInput";
-import { ScanProgress } from "@/components/ScanProgress";
+import { ScanningView } from "@/components/ScanningView";
 import { VulnerabilityReport } from "@/components/VulnerabilityReport";
 import { useScanWebSocket } from "@/lib/useWebSocket";
 
 export default function Home() {
-  const { events, state, report, error, startScan, stopScan, reset } = useScanWebSocket();
+  const { events, state, report, error, liveViewUrl, targetUrl, startScan, stopScan, reset } = useScanWebSocket();
 
   return (
     <main className="min-h-screen bg-white py-12 px-4">
       {state === "idle" && <ScanInput onStartScan={startScan} />}
 
-      {state === "scanning" && <ScanProgress events={events} onStop={stopScan} />}
+      {state === "scanning" && (
+        <ScanningView events={events} onStop={stopScan} liveViewUrl={liveViewUrl} targetUrl={targetUrl} />
+      )}
 
       {state === "complete" && report && <VulnerabilityReport report={report} onReset={reset} />}
 

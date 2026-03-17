@@ -78,7 +78,7 @@ export function ScanProgress({ events, onStop }: { events: WSEvent[]; onStop?: (
   const blocks = buildBlocks(events);
 
   return (
-    <div className="w-full max-w-2xl mx-auto">
+    <div className="w-full h-full flex flex-col">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-semibold text-gray-900">Scan Progress</h2>
         <div className="flex items-center gap-3">
@@ -108,7 +108,7 @@ export function ScanProgress({ events, onStop }: { events: WSEvent[]; onStop?: (
           </div>
         </div>
       </div>
-      <div className="space-y-1 text-sm max-h-[600px] overflow-y-auto">
+      <div className="space-y-1 text-sm flex-1 overflow-y-auto">
         {blocks.map((block, i) => (
           <BlockRow key={i} block={block} showDebug={showDebug} />
         ))}
