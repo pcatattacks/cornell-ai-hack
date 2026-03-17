@@ -28,6 +28,9 @@ class StagehandScanner:
         self.session_id: Optional[str] = None
         self._seen_responses: set[str] = set()
         self._cached_send_action = None  # observed send button, reused for all messages
+        self.human_detected = False  # set when human agent handoff is detected
+        self.send_blocked = False  # set when messages are being blocked/rejected
+        self._consecutive_recovery_failures = 0  # skip recovery after 2 consecutive failures
 
     async def _log(self, msg: str):
         print(f"[stagehand] {msg}")
@@ -225,42 +228,54 @@ class StagehandScanner:
         return False
 
     async def _verify_message_sent(self, message: str) -> bool:
-        """Verify that a message was actually sent by checking the chat history.
+        """Verify that a message was sent by checking if the chat input cleared.
 
-        Returns True if the message (or a close match) appears as a sent
-        message in the conversation. This catches silent send failures where
-        act() reports success but the message never left the input.
+        After a successful send, virtually all chat UIs clear the input field.
+        If typed text is still in the input, the message wasn't sent.
+
+        Uses input-cleared check instead of chat-history text matching because:
+        - No adversarial payload text in the extraction instruction
+        - Simple binary question → fewer model errors
+        - Works regardless of chat layout (scroll direction, message visibility)
         """
         await asyncio.sleep(1)  # brief wait for UI to update
         try:
             result = await self.session.extract(
                 instruction=(
-                    f"Check if the following message appears in the chat conversation as a SENT "
-                    f"message from the user (visitor): '{message[:80]}'\n"
-                    "Look in the chat history/conversation area, NOT in the text input field. "
-                    "The message should appear as a sent bubble or block in the conversation."
+                    "Look at the chat message input field — the textarea or text input "
+                    "where the user types messages to send to the chatbot.\n"
+                    "Does it currently contain any typed text, or is it empty?\n"
+                    "Note: placeholder text like 'Type a message...', 'Ask anything', or "
+                    "'Send a message' shown in grey does NOT count as typed text — that's "
+                    "just the placeholder. Only actual typed content counts."
                 ),
                 schema={
                     "type": "object",
                     "properties": {
-                        "message_found_in_chat": {
+                        "input_is_empty": {
                             "type": "boolean",
-                            "description": "True if the message appears in the chat conversation as a sent message, not just in the input field",
+                            "description": (
+                                "True if the chat input field is empty (only has placeholder "
+                                "text or nothing at all). False if it contains actual typed text "
+                                "that hasn't been sent yet."
+                            ),
                         },
                     },
-                    "required": ["message_found_in_chat"],
+                    "required": ["input_is_empty"],
                 },
             )
-            found = (
-                result.data.result.get("message_found_in_chat", False)
+            is_empty = (
+                result.data.result.get("input_is_empty", False)
                 if isinstance(result.data.result, dict)
                 else False
             )
-            await self._log(f"Send verification: {'confirmed' if found else 'NOT found in chat'}")
-            return found
+            await self._log(f"Send verification: input {'empty (sent)' if is_empty else 'has text (not sent)'}")
+            return is_empty
         except Exception as e:
             await self._log(f"Send verification failed: {e}")
-            # If verification itself fails, assume sent to avoid blocking
+            # If verification itself fails, assume sent to avoid blocking.
+            # If the message wasn't actually sent, read_response will fail
+            # and recovery will handle it.
             return True
 
     # ── Recovery ─────────────────────────────────────────────────────────
@@ -375,7 +390,9 @@ class StagehandScanner:
                         "chatbot/assistant, usually on the left side or in a different colored bubble). "
                         f"The user just sent: '{sent_message[:80]}'. "
                         "Do NOT extract this user message — extract only the BOT's reply that came after it. "
-                        "If the bot has not replied yet, set response_found to false."
+                        "If the bot has not replied yet, set response_found to false.\n\n"
+                        "Also check: has the conversation been handed off to a real human agent? "
+                        "And are there any error messages indicating messages are being blocked?"
                     ),
                     schema={
                         "type": "object",
@@ -388,14 +405,45 @@ class StagehandScanner:
                                 "type": "boolean",
                                 "description": "True only if a new chatbot response was found after the user's message",
                             },
+                            "is_human_agent": {
+                                "type": "boolean",
+                                "description": (
+                                    "True if the conversation has been handed off to a real human agent "
+                                    "(not an AI chatbot). Signs include: a message like 'You have been "
+                                    "transferred to our support team' or 'Connecting you with an agent', "
+                                    "a real person's name and photo appearing (e.g., 'Angelique from Crisp', "
+                                    "'Sarah joined the chat'), or the conversation style clearly changing "
+                                    "from bot-like to human-like. Only set True if the handoff HAS happened, "
+                                    "not if the bot merely offers to connect you."
+                                ),
+                            },
+                            "is_send_blocked": {
+                                "type": "boolean",
+                                "description": (
+                                    "True if there are visible error messages indicating messages are being "
+                                    "blocked or rejected. Signs include: error badges or red icons next to "
+                                    "sent messages like 'Failed to send', 'Not allowed to send', 'Message "
+                                    "rejected', 'You have been blocked', or messages like 'You can no longer "
+                                    "send messages in this conversation'. Do NOT set True just because no "
+                                    "response was received — only if there's an explicit error visible."
+                                ),
+                            },
                         },
-                        "required": ["chatbot_response", "response_found"],
+                        "required": ["chatbot_response", "response_found", "is_human_agent", "is_send_blocked"],
                     },
                 )
                 result = extract_resp.data.result
                 await self._log(f"Extract attempt {attempt + 1}: {result}")
 
                 if isinstance(result, dict):
+                    # Check chat status flags
+                    if result.get("is_human_agent"):
+                        self.human_detected = True
+                        await self._log("DETECTED: Human agent handoff")
+                    if result.get("is_send_blocked"):
+                        self.send_blocked = True
+                        await self._log("DETECTED: Messages being blocked")
+
                     if result.get("response_found") and result.get("chatbot_response", "").strip():
                         text = result["chatbot_response"].strip()
 
@@ -453,14 +501,15 @@ class StagehandScanner:
         """Send a message and read the response, with verified sending and recovery.
 
         Flow:
-        1. Send message → verify it appears in chat history
+        1. Send message → verify input cleared
         2. If not verified: retry send once (cheap, handles transient failures)
-        3. If still not verified: agent diagnose-and-recover → final retry
-        4. Read response with polling
-        5. If no response: agent diagnose-and-recover → retry read
+        3. If still not verified AND recovery not exhausted: agent recover → final retry
+        4. Read response with polling (also detects human handoff + send-blocked)
+        5. If no response AND recovery not exhausted: agent recover → retry read
         """
         # ── Send with verification ───────────────────────────────────────
         verified = False
+        skip_recovery = self._consecutive_recovery_failures >= 2
 
         sent = await self.send_message(message)
         if sent:
@@ -468,13 +517,13 @@ class StagehandScanner:
 
         if not verified:
             # Cheap retry — handles transient failures (button didn't register, etc.)
-            await self._log("Message not verified in chat, retrying send...")
+            await self._log("Message not verified, retrying send...")
             sent = await self.send_message(message)
             if sent:
                 verified = await self._verify_message_sent(message)
 
-        if not verified:
-            # Something structural is wrong — agent diagnoses and fixes
+        if not verified and not skip_recovery:
+            # Something structural — agent diagnoses and fixes
             await self._recover_send_failure()
             sent = await self.send_message(message)
             if sent:
@@ -482,12 +531,18 @@ class StagehandScanner:
 
         if not verified:
             await self._log("Message could not be sent after recovery")
+            self._consecutive_recovery_failures += 1
             return None
 
         # ── Read response ────────────────────────────────────────────────
         response = await self.read_response(message)
-        if response is None:
+        if response is None and not skip_recovery:
             await self._recover_read_failure()
             response = await self.read_response(message)
+
+        if response is None:
+            self._consecutive_recovery_failures += 1
+        else:
+            self._consecutive_recovery_failures = 0  # reset on any success
 
         return response

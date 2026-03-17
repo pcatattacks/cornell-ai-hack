@@ -246,6 +246,53 @@ async def run_attacks_stagehand(
                 await debug_cb(f"attack {attack_id} exception: {e}")
             response_text = None
 
+        # Check for human handoff or send-blocked (detected during extraction)
+        if scanner.human_detected:
+            yield {
+                "type": "attack_response",
+                "id": attack_id,
+                "response": response_text or "(no response / timeout)",
+            }
+            yield {
+                "type": "attack_verdict",
+                "id": attack_id,
+                "category": payload_data["category"],
+                "verdict": "RESISTANT",
+                "confidence": 0.3,
+                "evidence": "Conversation was handed off to a human agent",
+                "score": 0.0,
+            }
+            yield {
+                "type": "human_handoff",
+                "message": f"Chat transferred to human agent after {attack_id} messages. Stopping scan.",
+                "completed_attacks": attack_id,
+                "total_attacks": len(payloads),
+            }
+            return
+
+        if scanner.send_blocked:
+            yield {
+                "type": "attack_response",
+                "id": attack_id,
+                "response": response_text or "(no response / timeout)",
+            }
+            yield {
+                "type": "attack_verdict",
+                "id": attack_id,
+                "category": payload_data["category"],
+                "verdict": "RESISTANT",
+                "confidence": 0.3,
+                "evidence": "Chat system is blocking messages from being sent",
+                "score": 0.0,
+            }
+            yield {
+                "type": "send_blocked",
+                "message": f"Messages are being blocked after {attack_id} messages. Stopping scan.",
+                "completed_attacks": attack_id,
+                "total_attacks": len(payloads),
+            }
+            return
+
         # Check for rate limiting in the response
         is_rate_limited = False
         if response_text:
@@ -313,11 +360,13 @@ async def run_attacks_stagehand(
                 "score": verdict.score,
             }
 
-        # Stop on consecutive failures (timeouts)
-        if consecutive_failures >= 5:
+        # Stop on consecutive failures (timeouts) — threshold lowered from 5 to 3
+        # because each failure now includes recovery attempts, so 3 consecutive
+        # failures represents a thorough attempt to fix the problem
+        if consecutive_failures >= 3:
             yield {
                 "type": "rate_limited",
-                "message": f"5 consecutive timeouts after {attack_id} messages. Chatbot may be rate-limiting or unresponsive.",
+                "message": f"3 consecutive timeouts after {attack_id} messages. Chat may be unresponsive.",
                 "completed_attacks": attack_id,
                 "total_attacks": len(payloads),
             }
