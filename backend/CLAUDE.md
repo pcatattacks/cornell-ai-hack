@@ -92,8 +92,88 @@ python -m pytest tests/ -v
 # 23 tests, all passing
 ```
 
+## Stagehand Quick Reference
+
+When writing or modifying Stagehand code, use the `context7` MCP to fetch the latest Stagehand docs (`stagehand` library) before generating code. Below is a quick reference — always verify against the live docs.
+
+### Core API
+
+```python
+# page.act() — perform actions with natural language
+await page.act("Click the sign in button")
+
+# page.observe() — plan actions, get selectors before executing
+results = await page.observe("Click the sign in button")
+
+# page.extract() — extract structured data
+data = await page.extract(instruction="...", schema=MyModel)
+
+# agent — autonomous multi-step workflows
+agent = stagehand.agent()
+result = await agent.execute("Fill out the contact form")
+```
+
+### Observe-then-Act Pattern (PREFERRED)
+
+Observe returns `ObserveResult` objects that can be passed directly to `act()` — zero LLM calls on cached replays:
+
+```python
+# Observe once
+results = await page.observe("Click the sign in button")
+# Act with cached result (no LLM overhead)
+await page.act(results[0])
+```
+
+Use this pattern for any element that will be interacted with repeatedly (e.g., send buttons clicked 30 times).
+
+### Act Best Practices
+
+- **Atomic actions only**: "Click the sign in button" or "Type 'hello' into the search input"
+- **AVOID multi-step**: "Order me pizza" or "Sign in to the website" — break these into steps
+- **Template variables** for repeated instructions with different values:
+  ```python
+  await page.act("type %message% into the chat input", variables={"message": text})
+  ```
+- Cache `observe` results to avoid unexpected DOM changes between observe and act
+
+### Extract Best Practices
+
+Use Pydantic models for structured extraction (recommended over raw dicts):
+
+```python
+from pydantic import BaseModel, Field
+
+class ChatResponse(BaseModel):
+    response: str = Field(..., description="The chatbot's reply text")
+    found: bool = Field(..., description="Whether a response was found")
+
+data = await page.extract(instruction="Extract the latest bot message", schema=ChatResponse)
+```
+
+### Agent Best Practices
+
+- Be specific: `"Fill out the contact form with name 'John Doe' and submit it"`
+- Break complex tasks into smaller steps
+- Set `max_steps` appropriate to complexity (10-15 simple, 25-50 complex)
+- Combine agent for navigation with act/observe/extract for precise repeated operations
+
+### Important Notes
+
+- Stagehand v3 handles **iframes natively** — no special parameters needed
+- Use `dom_settle_timeout_ms` to wait for dynamic content (we use 5000ms)
+- `self_heal=True` enables automatic retry on stale elements
+- Default viewport should be **1288x711** for best model performance
+
+### Our Implementation Differences
+
+Our scanner uses `AsyncStagehand` (the REST API client) rather than the `Stagehand` class with `StagehandConfig`. The API is similar but method signatures differ slightly:
+- We call `self.session.act()` / `self.session.observe()` / `self.session.extract()` on the session object
+- We call `self.session.execute()` for agent tasks (vs `agent.execute()` in the newer API)
+- We use raw dict schemas for extract (vs Pydantic models) — consider migrating to Pydantic
+
 ## Known Issues / Active Work
 
-- `feature/harden-scanning` branch: replacing find_and_open_chat with agent-based setup, adding cached templated act() calls, role-based transcript extraction
+- `feature/harden-scanning` branch: agent-based setup, cached observe-then-act sending, diagnose-and-recover, human handoff/send-blocked detection
 - Legacy scanner modules (vision_navigator, generic_chat, etc.) are still in the codebase but unused — can be deleted
-- Stagehand model for act/observe/extract: Haiku 4.5 (`anthropic/claude-haiku-4-5-20251001`)
+- Stagehand model: Gemini 2.5 Flash (`google/gemini-2.5-flash`)
+- Consider migrating from `AsyncStagehand` REST client to `Stagehand` + `StagehandConfig` class for access to newer features (context manager, `stagehand.page`, `stagehand.agent()`)

@@ -122,8 +122,8 @@ class StagehandScanner:
                         "Step 5: If asked for an email address or name, type 'test@scanner.local' for email "
                         "and 'Test' for name, then submit. If there's a Skip button, click Skip instead.\n\n"
                         "Step 6: Wait a moment for the chat to fully load and any animations to finish. "
-                        "Then click on the chat message input field to confirm it is interactive. "
-                        "Only stop once you have successfully clicked the input and it is ready for typing.\n\n"
+                        "Verify that a text input field for typing chat messages is now visible and ready. "
+                        "Stop once you can see the message input.\n\n"
                         "Do NOT type any chat messages — just get the chat ready for messaging."
                     ),
                     "max_steps": 15,
