@@ -58,7 +58,7 @@ class StagehandScanner:
                     "solve_captchas": True,
                     "block_ads": True,
                     "record_session": True,
-                    "viewport": {"width": 1280, "height": 720},
+                    "viewport": {"width": 1288, "height": 711},
                 },
             },
         )
@@ -121,8 +121,9 @@ class StagehandScanner:
                         "option that starts a new conversation.\n\n"
                         "Step 5: If asked for an email address or name, type 'test@scanner.local' for email "
                         "and 'Test' for name, then submit. If there's a Skip button, click Skip instead.\n\n"
-                        "Step 6: Verify that a text input field for typing chat messages is now visible and ready. "
-                        "Stop once you can see the message input.\n\n"
+                        "Step 6: Wait a moment for the chat to fully load and any animations to finish. "
+                        "Then click on the chat message input field to confirm it is interactive. "
+                        "Only stop once you have successfully clicked the input and it is ready for typing.\n\n"
                         "Do NOT type any chat messages — just get the chat ready for messaging."
                     ),
                     "max_steps": 15,
@@ -130,7 +131,11 @@ class StagehandScanner:
             )
             await self._log("Agent setup completed")
 
-            # Verify the chat input exists
+            # Validate the chat input is in the DOM and findable by act().
+            # The agent and act() resolve elements independently — the agent
+            # confirming the input is interactive doesn't guarantee act() can
+            # find it. This observe() also provides natural timing for any
+            # remaining animations to settle.
             observe_resp = await self.session.observe(
                 instruction=(
                     "find the textarea or text input where a user types chat messages to send. "
@@ -139,10 +144,23 @@ class StagehandScanner:
                 ),
             )
             if observe_resp and observe_resp.data and observe_resp.data.result:
-                await self._log("Chat input verified — ready for messages")
+                await self._log("Chat input validated by observe — ready for messages")
                 return True
 
-            await self._log("Agent completed but chat input not found")
+            # If observe fails, wait and retry once (animation timing)
+            await self._log("Chat input not found by observe, waiting for animations...")
+            await asyncio.sleep(3)
+            observe_resp = await self.session.observe(
+                instruction=(
+                    "find the textarea or text input where a user types chat messages to send. "
+                    "Do NOT return email/name input fields."
+                ),
+            )
+            if observe_resp and observe_resp.data and observe_resp.data.result:
+                await self._log("Chat input validated on retry — ready for messages")
+                return True
+
+            await self._log("Agent completed but chat input not found by observe")
         except Exception as e:
             await self._log(f"Agent setup failed: {e}")
 
@@ -388,9 +406,8 @@ class StagehandScanner:
                         "Chat areas show two types of messages: USER messages (sent by the visitor, "
                         "usually on the right side or in a colored bubble) and BOT messages (from the "
                         "chatbot/assistant, usually on the left side or in a different colored bubble). "
-                        f"The user just sent: '{sent_message[:80]}'. "
-                        "Do NOT extract this user message — extract only the BOT's reply that came after it. "
-                        "If the bot has not replied yet, set response_found to false.\n\n"
+                        "Do NOT extract the most recent USER message — extract only the BOT's reply "
+                        "that came after it. If the bot has not replied yet, set response_found to false.\n\n"
                         "Also check: has the conversation been handed off to a real human agent? "
                         "And are there any error messages indicating messages are being blocked?"
                     ),

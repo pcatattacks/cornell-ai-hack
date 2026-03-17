@@ -184,12 +184,21 @@ async def scan_endpoint(websocket: WebSocket):
                 })
             elif event["type"] in ("browser_died", "rate_limited", "human_handoff", "send_blocked"):
                 scan_aborted = True
+                abort_reason = event["type"]
+                abort_message = event.get("message", "Scan interrupted.")
+                abort_completed = event.get("completed_attacks")
+                abort_total = event.get("total_attacks")
 
         # --- Score + Report ---
         report = _build_report(url, "auto-detected (Stagehand)", findings)
         if scan_aborted:
             report["scan_aborted"] = True
-            report["message"] = "Scan interrupted. Report based on completed attacks."
+            report["abort_reason"] = abort_reason
+            report["message"] = abort_message
+            if abort_completed is not None:
+                report["completed_attacks"] = abort_completed
+            if abort_total is not None:
+                report["total_attacks"] = abort_total
         await websocket.send_json({"type": "scan_complete", "report": report})
 
     except WebSocketDisconnect:

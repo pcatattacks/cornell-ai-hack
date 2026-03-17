@@ -9,6 +9,8 @@ export type WSEventType =
   | "scan_complete"
   | "browser_died"
   | "rate_limited"
+  | "human_handoff"
+  | "send_blocked"
   | "debug"
   | "error";
 
@@ -33,6 +35,11 @@ export interface ScanReport {
   platform: string | null;
   overall_grade: string;
   overall_score: number | null;
+  scan_aborted?: boolean;
+  abort_reason?: "human_handoff" | "send_blocked" | "rate_limited" | "browser_died" | "user_stopped";
+  message?: string;
+  completed_attacks?: number;
+  total_attacks?: number;
   categories: Record<string, CategoryDetail>;
   findings: Array<{
     id: number;

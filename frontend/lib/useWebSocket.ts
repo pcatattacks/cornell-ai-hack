@@ -89,12 +89,20 @@ function buildPartialReport(events: WSEvent[], url: string): ScanReport {
 
   const scanUrl = events.find((e) => e.type === "scan_start")?.url as string || url;
 
+  // Count completed attacks from events
+  const totalAttacks = events.filter((e) => e.type === "attack_sent").length;
+
   return {
     url: scanUrl,
     timestamp: new Date().toISOString(),
     platform: "auto-detected (Stagehand)",
     overall_grade: overallGrade,
     overall_score: overallScore,
+    scan_aborted: true,
+    abort_reason: "user_stopped" as const,
+    message: "Report is based on completed attacks only.",
+    completed_attacks: findings.length,
+    total_attacks: totalAttacks || 30,
     categories,
     findings,
   };

@@ -157,7 +157,7 @@ function buildBlocks(events: WSEvent[]): Block[] {
       } else {
         blocks.push({ type: "debug", events: [event] });
       }
-    } else if (event.type === "rate_limited" || event.type === "browser_died") {
+    } else if (event.type === "rate_limited" || event.type === "browser_died" || event.type === "human_handoff" || event.type === "send_blocked") {
       blocks.push({ type: "warning", events: [event] });
     } else {
       blocks.push({ type: "status", events: [event] });
