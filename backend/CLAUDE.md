@@ -30,12 +30,13 @@ scanner/
   generic_chat.py                — Legacy: custom send/read (not used in Stagehand flow)
   prechat_handler.py             — Legacy: cookie/form handling (not used in Stagehand flow)
 payloads/
-  payloads.json                  — 30 attacks, 6 categories, with reference URLs
+  payloads.json                  — 45 attacks, 6 categories, with priority rankings and references
 tests/
   test_scoring.py                — Scoring calculation tests
   test_response_analyzer.py      — Judge prompt/parse tests
   test_widget_detector.py        — Widget detection tests
   test_chat_interactor.py        — Chat interactor tests
+  test_attack_runner.py          — Payload loading and sampling tests
 ```
 
 ## Scan Flow (main.py)
@@ -46,7 +47,7 @@ tests/
 4. `scanner.navigate(url)` → go to site, scroll to trigger widgets
 5. `scanner.dismiss_cookies()` → handle cookie banners
 6. `scanner.find_and_open_chat()` → find widget, handle menus/forms
-7. `run_attacks_stagehand()` → 30 attacks, each: send → read → judge → emit events
+7. `run_attacks_stagehand()` → 20 attacks (sampled by priority from 45-attack pool), each: send → read → judge → emit events
 8. Build report → send `scan_complete` event
 9. `scanner.close()` → end Browserbase session
 
@@ -60,10 +61,15 @@ tests/
 
 ## Attack Runner (attack_runner.py)
 
-- `load_payloads()`: Loads from payloads.json, optionally limits per category
+- `load_payloads(max_per_category, sample_size, strategy)`: Loads from payloads.json with sampling
+  - `sample_size`: Total attacks to return (default: all 45)
+  - `strategy`: "priority" (P1 first) or "random"
+  - `max_per_category`: Legacy parameter, takes first N per category
+  - Priority sampling ensures all 6 categories are represented, P1 attacks first
 - `run_attacks_stagehand()`: Main attack loop with:
+  - Priority-based sampling (default: 20 attacks from 45-attack pool)
   - Rate limit phrase detection
-  - Consecutive timeout detection (5 = stop)
+  - Consecutive timeout detection (3 = stop)
   - Repeated response detection (2 = stop)
   - 3s delay between attacks
 
@@ -75,13 +81,13 @@ tests/
 
 ## Scoring (scoring.py)
 
-6 categories with weights:
-- system_prompt_extraction: 0.20
-- goal_hijacking: 0.20
+6 categories with weights (updated based on real-world threat data):
+- system_prompt_extraction: 0.25
+- indirect_prompt_injection: 0.20
 - data_leakage: 0.20
+- goal_hijacking: 0.15
+- insecure_output_handling: 0.10
 - guardrail_bypass: 0.10
-- insecure_output_handling: 0.15
-- indirect_prompt_injection: 0.15
 
 Grades: A (0-0.1), B (0.1-0.3), C (0.3-0.5), D (0.5-0.7), F (0.7-1.0)
 
@@ -89,7 +95,7 @@ Grades: A (0-0.1), B (0.1-0.3), C (0.3-0.5), D (0.5-0.7), F (0.7-1.0)
 
 ```bash
 python -m pytest tests/ -v
-# 23 tests, all passing
+# 31 tests, all passing
 ```
 
 ## Stagehand Quick Reference

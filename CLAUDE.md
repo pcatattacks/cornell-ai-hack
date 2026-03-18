@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-AgentProbe scans AI chatbots on websites for prompt injection vulnerabilities. It uses a browser agent (Browserbase + Stagehand) to navigate to a website, find the chatbot, and run 30 curated prompt injection attacks across 6 categories. Claude judges each response and generates an A-F vulnerability report.
+AgentProbe scans AI chatbots on websites for prompt injection vulnerabilities. It uses a browser agent (Browserbase + Stagehand) to navigate to a website, find the chatbot, and run prompt injection attacks from a pool of 45 research-backed payloads (20 sampled per scan by priority). Claude judges each response and generates an A-F vulnerability report.
 
 **Live:** https://agent-probe.vercel.app
 
@@ -26,7 +26,7 @@ User → Vercel (Next.js frontend) → Railway (FastAPI backend) → Browserbase
 - `backend/scanner/attack_runner.py` — Loads payloads, runs attacks, calls Claude judge, handles rate limiting
 - `backend/scanner/response_analyzer.py` — Claude judge prompt + verdict parsing
 - `backend/scanner/scoring.py` — Category scores, weighted grades (A-F)
-- `backend/payloads/payloads.json` — 30 curated attacks across 6 categories with references
+- `backend/payloads/payloads.json` — 45 research-backed attacks across 6 categories with priority rankings
 - `frontend/app/page.tsx` — Main page with scan input, progress, and report views
 - `frontend/lib/useWebSocket.ts` — WebSocket hook with stop scan + partial report
 - `frontend/components/ScanProgress.tsx` — Real-time attack feed with grouped blocks
