@@ -42,10 +42,10 @@ def test_calculate_overall_score():
         "indirect_prompt_injection": 0.4,
     }
     overall = calculate_overall_score(category_scores)
-    # Weights: 0.20, 0.20, 0.20, 0.10, 0.15, 0.15
-    # = 0.5*0.20 + 0.3*0.20 + 0.1*0.20 + 0.8*0.10 + 0.2*0.15 + 0.4*0.15
-    # = 0.10 + 0.06 + 0.02 + 0.08 + 0.03 + 0.06 = 0.35
-    assert abs(overall - 0.35) < 0.001
+    # New weights: 0.25, 0.15, 0.20, 0.10, 0.10, 0.20
+    # = 0.5*0.25 + 0.3*0.15 + 0.1*0.20 + 0.8*0.10 + 0.2*0.10 + 0.4*0.20
+    # = 0.125 + 0.045 + 0.02 + 0.08 + 0.02 + 0.08 = 0.37
+    assert abs(overall - 0.37) < 0.001
 
 
 def test_calculate_overall_score_skips_none():
@@ -58,7 +58,7 @@ def test_calculate_overall_score_skips_none():
         "indirect_prompt_injection": None,
     }
     overall = calculate_overall_score(category_scores)
-    # Only spe (0.20) and dlk (0.20) contribute
-    # Normalized: 0.20/(0.20+0.20) = 0.5 each
-    # 0.5*0.5 + 0.0*0.5 = 0.25
-    assert abs(overall - 0.25) < 0.001
+    # Only spe (0.25) and dlk (0.20) contribute
+    # Normalized: 0.25/(0.25+0.20) = 0.5556, 0.20/0.45 = 0.4444
+    # 0.5*0.5556 + 0.0*0.4444 = 0.2778
+    assert abs(overall - 0.2778) < 0.001

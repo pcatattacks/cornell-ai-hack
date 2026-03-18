@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import random
 from pathlib import Path
 from dataclasses import dataclass
 from typing import AsyncGenerator
@@ -20,10 +21,19 @@ from playwright.async_api import Page
 PAYLOADS_PATH = Path(__file__).parent.parent / "payloads" / "payloads.json"
 
 
-def load_payloads(max_per_category: int | None = None) -> list[dict]:
+def load_payloads(
+    max_per_category: int | None = None,
+    sample_size: int | None = None,
+    strategy: str = "priority",
+) -> list[dict]:
     with open(PAYLOADS_PATH) as f:
         payloads = json.load(f)
 
+    # New sampling takes precedence
+    if sample_size is not None:
+        return _sample_payloads(payloads, sample_size, strategy)
+
+    # Legacy: limit per category
     if max_per_category is not None:
         by_category: dict[str, list] = {}
         for p in payloads:
@@ -33,6 +43,92 @@ def load_payloads(max_per_category: int | None = None) -> list[dict]:
             payloads.extend(cat_payloads[:max_per_category])
 
     return payloads
+
+
+# Must match descending order of CATEGORY_WEIGHTS in scoring.py
+_CATEGORY_WEIGHT_ORDER = [
+    "system_prompt_extraction",    # 0.25
+    "data_leakage",                # 0.20
+    "indirect_prompt_injection",   # 0.20
+    "goal_hijacking",              # 0.15
+    "insecure_output_handling",    # 0.10
+    "guardrail_bypass",            # 0.10
+]
+
+
+def _sample_payloads(
+    payloads: list[dict], sample_size: int, strategy: str
+) -> list[dict]:
+    """Sample attacks from the pool using the given strategy."""
+    if sample_size >= len(payloads):
+        return payloads
+
+    # Group by category
+    by_category: dict[str, list[dict]] = {}
+    for p in payloads:
+        by_category.setdefault(p["category"], []).append(p)
+
+    num_categories = len(by_category)
+    quota = max(1, sample_size // num_categories)
+
+    if strategy == "random":
+        return _sample_random(by_category, sample_size, quota)
+    else:
+        return _sample_priority(by_category, sample_size, quota)
+
+
+def _sample_priority(
+    by_category: dict[str, list[dict]], sample_size: int, quota: int
+) -> list[dict]:
+    """Pick top-priority attacks from each category, then fill remaining slots."""
+    selected: list[dict] = []
+    remaining: dict[str, list[dict]] = {}
+
+    for cat in _CATEGORY_WEIGHT_ORDER:
+        if cat not in by_category:
+            continue
+        sorted_attacks = sorted(by_category[cat], key=lambda p: p.get("priority", 2))
+        take = min(quota, len(sorted_attacks))
+        selected.extend(sorted_attacks[:take])
+        if take < len(sorted_attacks):
+            remaining[cat] = sorted_attacks[take:]
+
+    # Fill remaining slots round-robin by category weight order
+    while len(selected) < sample_size and remaining:
+        for cat in _CATEGORY_WEIGHT_ORDER:
+            if len(selected) >= sample_size:
+                break
+            if cat in remaining and remaining[cat]:
+                selected.append(remaining[cat].pop(0))
+                if not remaining[cat]:
+                    del remaining[cat]
+
+    return selected
+
+
+def _sample_random(
+    by_category: dict[str, list[dict]], sample_size: int, quota: int
+) -> list[dict]:
+    """Randomly sample from each category, then fill remaining slots."""
+    selected: list[dict] = []
+    remaining: list[dict] = []
+
+    for cat in _CATEGORY_WEIGHT_ORDER:
+        if cat not in by_category:
+            continue
+        cat_attacks = list(by_category[cat])
+        random.shuffle(cat_attacks)
+        take = min(quota, len(cat_attacks))
+        selected.extend(cat_attacks[:take])
+        remaining.extend(cat_attacks[take:])
+
+    # Fill remaining slots randomly
+    random.shuffle(remaining)
+    slots_left = sample_size - len(selected)
+    if slots_left > 0:
+        selected.extend(remaining[:slots_left])
+
+    return selected
 
 
 async def run_attacks(
@@ -207,11 +303,17 @@ async def run_attacks_stagehand(
     scanner: StagehandScanner,
     anthropic_client: anthropic.AsyncAnthropic,
     max_per_category: int | None = None,
+    sample_size: int | None = None,
+    strategy: str = "priority",
     delay_seconds: float = 3.0,
     debug_cb=None,
 ) -> AsyncGenerator[dict, None]:
     """Run attacks using Stagehand scanner."""
-    payloads = load_payloads(max_per_category=max_per_category)
+    payloads = load_payloads(
+        max_per_category=max_per_category,
+        sample_size=sample_size,
+        strategy=strategy,
+    )
     consecutive_failures = 0
     last_response = None
     repeated_response_count = 0
