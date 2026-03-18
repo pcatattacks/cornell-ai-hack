@@ -9,7 +9,7 @@ export default function Home() {
   const { events, state, report, error, liveViewUrl, targetUrl, startScan, stopScan, reset } = useScanWebSocket();
 
   return (
-    <main className="min-h-screen bg-white py-12 px-4">
+    <main className={`min-h-screen ${state === "scanning" ? "bg-gray-50 p-6" : "bg-white py-12 px-4"}`}>
       {state === "idle" && <ScanInput onStartScan={startScan} />}
 
       {state === "scanning" && (

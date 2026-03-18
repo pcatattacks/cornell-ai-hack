@@ -7,7 +7,7 @@ interface BrowserLiveViewProps {
 
 export function BrowserLiveView({ url, liveViewUrl }: BrowserLiveViewProps) {
   return (
-    <div className="flex flex-col h-full bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+    <div className="w-full bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
       {/* Browser chrome */}
       <div className="flex items-center gap-2 px-3 py-2 bg-gray-100 border-b border-gray-200">
         {/* Traffic lights */}
@@ -26,8 +26,8 @@ export function BrowserLiveView({ url, liveViewUrl }: BrowserLiveViewProps) {
           LIVE
         </div>
       </div>
-      {/* iframe */}
-      <div className="flex-1 relative">
+      {/* iframe — locked to Browserbase viewport aspect ratio */}
+      <div className="relative aspect-[1288/711] bg-gray-50">
         <iframe
           src={liveViewUrl}
           allow="clipboard-read; clipboard-write"

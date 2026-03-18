@@ -78,10 +78,22 @@ export function ScanProgress({ events, onStop }: { events: WSEvent[]; onStop?: (
   const blocks = buildBlocks(events);
 
   return (
-    <div className="w-full h-full flex flex-col">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-semibold text-gray-900">Scan Progress</h2>
-        <div className="flex items-center gap-3">
+    <div className="w-full h-full flex flex-col bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+      <div className="px-4 py-3 border-b border-gray-100">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-semibold text-gray-900">Scan Progress</h2>
+          <div className="flex items-center gap-2 text-sm text-gray-500 font-mono">
+            <span>&#9201;</span>
+            <span>{formatTime(elapsed)}</span>
+            {attackCount > 0 && (
+              <>
+                <span className="text-gray-300">·</span>
+                <span>{attackCount}{totalAttacks ? `/${totalAttacks}` : ""}</span>
+              </>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-3 mt-2">
           {onStop && !isComplete && (
             <button
               onClick={onStop}
@@ -96,19 +108,9 @@ export function ScanProgress({ events, onStop }: { events: WSEvent[]; onStop?: (
           >
             {showDebug ? "Hide" : "Show"} debug
           </button>
-          <div className="flex items-center gap-2 text-sm text-gray-500 font-mono">
-            <span>&#9201;</span>
-            <span>{formatTime(elapsed)}</span>
-            {attackCount > 0 && (
-              <>
-                <span className="text-gray-300">·</span>
-                <span>{attackCount}{totalAttacks ? `/${totalAttacks}` : ""} attacks</span>
-              </>
-            )}
-          </div>
         </div>
       </div>
-      <div className="space-y-1 text-sm flex-1 overflow-y-auto">
+      <div className="space-y-1 text-sm flex-1 overflow-y-auto px-4 py-3">
         {blocks.map((block, i) => (
           <BlockRow key={i} block={block} showDebug={showDebug} />
         ))}

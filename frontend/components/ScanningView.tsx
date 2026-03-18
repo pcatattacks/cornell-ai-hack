@@ -22,14 +22,14 @@ export function ScanningView({ events, onStop, liveViewUrl, targetUrl }: Scannin
   }
 
   return (
-    <div className="w-full max-w-6xl mx-auto">
-      <div className="flex flex-col lg:flex-row gap-4" style={{ height: "calc(100vh - 120px)" }}>
-        {/* Browser pane — 60% */}
-        <div className="lg:flex-[3] min-h-[300px] lg:min-h-0">
+    <div className="w-full mx-auto">
+      <div className="flex flex-col lg:flex-row gap-6" style={{ height: "calc(100vh - 48px)" }}>
+        {/* Browser pane — 50%, vertically centered */}
+        <div className="lg:flex-1 min-w-0 flex items-center">
           <BrowserLiveView url={targetUrl || ""} liveViewUrl={liveViewUrl} />
         </div>
-        {/* Attack feed — 40% */}
-        <div className="lg:flex-[2] min-h-[300px] lg:min-h-0 overflow-hidden">
+        {/* Attack feed — 50% */}
+        <div className="lg:flex-1 min-w-0 lg:h-full overflow-hidden">
           <ScanProgress events={events} onStop={onStop} />
         </div>
       </div>
