@@ -62,7 +62,7 @@ idle → scanning → complete
 ## Key Features
 
 - **Stop Scan**: Closes WebSocket, builds partial report client-side from collected events
-- **Timer**: Live elapsed time + attack count (e.g., "⏱ 2:34 · 12/30 attacks")
+- **Timer**: Live elapsed time + attack count (e.g., "⏱ 2:34 · 12/20 attacks")
 - **Loading indicator**: Bouncing dots ("Working...") between events
 - **Attack blocks**: Each attack is a card with header (name + category + reference link), debug logs, payload (→), response (←), and verdict
 - **No Chatbot Detected**: Friendly message with suggestions when no widget found

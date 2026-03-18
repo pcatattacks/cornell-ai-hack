@@ -67,7 +67,7 @@ export function ScanInput({ onStartScan, disabled }: ScanInputProps) {
         </div>
         <div className="flex items-baseline gap-2">
           <span className="w-1 h-1 rounded-sm bg-blue-500 flex-shrink-0 translate-y-[-1px]" />
-          <span>45 attacks across 6 vulnerability categories</span>
+          <span>20 priority-sampled attacks from 45-attack pool</span>
         </div>
         <div className="flex items-baseline gap-2">
           <span className="w-1 h-1 rounded-sm bg-blue-500 flex-shrink-0 translate-y-[-1px]" />

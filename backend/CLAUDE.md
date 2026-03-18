@@ -53,7 +53,7 @@ tests/
 
 ## Stagehand Scanner (stagehand_scanner.py)
 
-- `init()`: Creates `AsyncStagehand` client, starts session with Haiku 4.5
+- `init()`: Creates `AsyncStagehand` client, starts session with Gemini 2.5 Flash
 - `find_and_open_chat()`: Uses observe + act to find widget, dismiss blockers
 - `send_message()`: Types message into chat input, presses Enter
 - `read_response()`: Extracts chatbot response, checks for stale responses

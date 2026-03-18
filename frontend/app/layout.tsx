@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "agent/probe - AI Chatbot Security Scanner",
-  description: "Scan AI chatbots for prompt injection vulnerabilities. 45 research-backed attacks across 6 categories with real-time results and A-F grading.",
+  description: "Scan AI chatbots for prompt injection vulnerabilities. 20 priority-sampled attacks from a 45-attack research pool across 6 categories with real-time results and A-F grading.",
 };
 
 export default function RootLayout({

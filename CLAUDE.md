@@ -17,7 +17,7 @@ User → Vercel (Next.js frontend) → Railway (FastAPI backend) → Browserbase
 - **Backend** (`backend/`): FastAPI + Stagehand SDK. Orchestrates scans via WebSocket.
 - **Browser automation**: Stagehand v3 Python SDK → Browserbase remote Chromium.
 - **LLM Judge**: Claude Sonnet 4.6 classifies each chatbot response as VULNERABLE/PARTIAL/RESISTANT.
-- **Stagehand model**: Claude Haiku 4.5 for fast browser automation (act/observe/extract).
+- **Stagehand model**: Gemini 2.5 Flash for fast browser automation (act/observe/extract).
 
 ## Key Files
 
@@ -45,7 +45,8 @@ User → Vercel (Next.js frontend) → Railway (FastAPI backend) → Browserbase
 ## Environment Variables
 
 Backend (Railway):
-- `ANTHROPIC_API_KEY` — for Claude judge + Stagehand
+- `ANTHROPIC_API_KEY` — for Claude judge
+- `GOOGLE_API_KEY` — for Stagehand (Gemini 2.5 Flash)
 - `BROWSERBASE_API_KEY` — for remote browser sessions
 - `BROWSERBASE_PROJECT_ID` — Browserbase project
 - `ALLOWED_ORIGINS` — CORS origins (Vercel URL)
