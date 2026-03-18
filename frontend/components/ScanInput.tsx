@@ -67,7 +67,7 @@ export function ScanInput({ onStartScan, disabled }: ScanInputProps) {
         </div>
         <div className="flex items-start gap-2">
           <span className="text-blue-500 mt-0.5">&#9679;</span>
-          <span>Runs 30+ prompt injection attacks across 4 categories</span>
+          <span>Runs 20 priority-ranked attacks from a pool of 45 across 6 categories</span>
         </div>
         <div className="flex items-start gap-2">
           <span className="text-blue-500 mt-0.5">&#9679;</span>

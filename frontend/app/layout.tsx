@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "AgentProbe — AI Chatbot Security Scanner",
-  description: "Scan AI chatbots for prompt injection vulnerabilities. 30 attacks across 6 categories with real-time results and A-F grading.",
+  description: "Scan AI chatbots for prompt injection vulnerabilities. 45 research-backed attacks across 6 categories with real-time results and A-F grading.",
 };
 
 export default function RootLayout({
